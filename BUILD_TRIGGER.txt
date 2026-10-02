@@ -1,0 +1,1 @@
+Trigger GitHub Actions build for QR Windows Android v1.0.
