@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">QR → Windows</string>
+    <string name="title">QR → Windows</string>
+    <string name="status_not_connected">Chưa kết nối máy tính</string>
+    <string name="connect_pc">KẾT NỐI MÁY TÍNH</string>
+    <string name="scan_qr">QUÉT QR</string>
+    <string name="hint">Máy tính phải chạy iPhone QR Receiver v1.0 và cùng mạng LAN/Wi‑Fi với điện thoại.</string>
+</resources>
