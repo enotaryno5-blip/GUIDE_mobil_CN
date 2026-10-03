@@ -1,5 +1,5 @@
-const CACHE='qr-windows-v5';
-const CORE=['./','./index.html','./manifest.webmanifest','./icon.svg','./bridge.js'];
+const CACHE='qr-windows-v6';
+const CORE=['./','./index.html','./pair.html','./manifest.webmanifest','./icon.svg','./bridge.js'];
 
 self.addEventListener('install',e=>{
   self.skipWaiting();
@@ -27,7 +27,7 @@ self.addEventListener('fetch',e=>{
         const r = await fetch(e.request, {cache:'no-store'});
         let html = await r.text();
         if (!html.includes('bridge.js')) {
-          html = html.replace('</body>', '<script src="./bridge.js?v=5"></script></body>');
+          html = html.replace('</body>', '<script src="./bridge.js?v=6"></script></body>');
         }
         const headers = new Headers(r.headers);
         headers.set('Content-Type','text/html; charset=utf-8');
@@ -38,7 +38,7 @@ self.addEventListener('fetch',e=>{
         if (!cached) throw _;
         let html = await cached.text();
         if (!html.includes('bridge.js')) {
-          html = html.replace('</body>', '<script src="./bridge.js?v=5"></script></body>');
+          html = html.replace('</body>', '<script src="./bridge.js?v=6"></script></body>');
         }
         return new Response(html,{headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}});
       }
