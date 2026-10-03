@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#0b1220">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="QR Camera Test">
-  <title>QR Camera Test</title>
+  <meta name="apple-mobile-web-app-title" content="QR → Windows">
+  <title>QR → Windows</title>
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <style>
@@ -21,27 +21,37 @@
     video { width:100%; height:100%; object-fit:contain; background:#000; }
     .frame { position:absolute; inset:18% 7%; border:3px solid #5ee36e; border-radius:18px; box-shadow:0 0 0 9999px #0002; pointer-events:none; transition:.15s ease; }
     .frame.hit { border-width:6px; box-shadow:0 0 30px #5ee36e,0 0 0 9999px #0b5a2440; }
+    .frame.pair { border-color:#ffd54f; box-shadow:0 0 22px #ffd54f99,0 0 0 9999px #5a430040; }
+    .frame.error { border-color:#ff5d5d; box-shadow:0 0 25px #ff5d5daa,0 0 0 9999px #5a000050; }
     .scanline { position:absolute; left:9%; right:9%; top:50%; height:2px; background:#5ee36e; box-shadow:0 0 12px #5ee36e; animation:scan 1.25s ease-in-out infinite alternate; pointer-events:none; }
     @keyframes scan { from { transform:translateY(-150px); } to { transform:translateY(150px); } }
-    .badge { position:absolute; top:10px; left:10px; background:#000b; border:1px solid #ffffff33; border-radius:999px; padding:7px 10px; font-size:13px; z-index:4; }
-    .flash { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; background:#087a36dd; opacity:0; pointer-events:none; transition:opacity .12s ease; z-index:3; text-align:center; }
+    .badge { position:absolute; top:10px; left:10px; right:10px; background:#000b; border:1px solid #ffffff33; border-radius:999px; padding:7px 10px; font-size:13px; z-index:4; text-align:center; }
+    .flash { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; background:#087a36dd; opacity:0; pointer-events:none; transition:opacity .12s ease; z-index:3; text-align:center; padding:20px; }
     .flash.show { opacity:1; }
-    .flash strong { font-size:40px; line-height:1.05; }
+    .flash.pair { background:#8a6500e8; }
+    .flash.error { background:#8d1515e8; }
+    .flash strong { font-size:38px; line-height:1.05; }
     .flash span { margin-top:10px; font-size:17px; font-weight:700; }
     .controls { display:grid; gap:10px; margin-top:12px; }
     .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
     button,select,input { font:inherit; }
-    button { border:0; border-radius:14px; padding:14px 12px; font-weight:700; background:#1677ff; color:white; }
+    button { border:0; border-radius:14px; padding:14px 12px; font-weight:800; background:#1677ff; color:white; }
     button.secondary { background:#253047; }
+    button.connect { background:#9a6b00; }
     button:disabled { opacity:.5; }
     select { width:100%; border:1px solid #ffffff22; background:#141d2e; color:white; border-radius:12px; padding:12px; }
     .panel { background:#141d2e; border:1px solid #ffffff18; border-radius:16px; padding:12px; }
+    .panel.connected { border-color:#2da44e; background:#102519; }
+    .panel.offline { border-color:#bf3b3b; background:#2a1111; }
     .label { font-size:13px; color:#aeb9ca; margin-bottom:7px; }
+    .pcLine { font-weight:800; word-break:break-word; }
+    .pcHint { color:#93a3b9; font-size:12px; margin-top:5px; }
     .zoomwrap { display:none; }
     .zoomrow { display:flex; gap:10px; align-items:center; }
     input[type=range] { flex:1; }
     .result { margin-top:12px; background:#0f1a2c; border:1px solid #2b415f; border-radius:16px; padding:12px; min-height:96px; }
     .result.ok { border-color:#2da44e; background:#0f2417; }
+    .result.error { border-color:#bf3b3b; background:#2a1111; }
     .resultTitle { font-weight:800; margin-bottom:6px; }
     #value { white-space:pre-wrap; word-break:break-word; color:#dbe7f6; }
     .tiny { color:#93a3b9; font-size:12px; line-height:1.45; margin-top:10px; }
@@ -50,21 +60,29 @@
 </head>
 <body>
   <main class="app">
-    <h1>QR Camera Test — chế độ nhạy + liên tục</h1>
-    <div class="sub">Tự quét liên tục. Đọc xong mã này, đưa mã khác vào là tự đọc tiếp — không cần bấm lệnh.</div>
+    <h1>QR → Windows</h1>
+    <div class="sub">Tự quét liên tục. Mã mới được đọc và gửi thẳng sang Receiver trên Windows.</div>
 
     <section class="camera">
       <video id="video" playsinline muted autoplay></video>
       <div class="frame" id="frame"></div>
       <div class="scanline"></div>
       <div class="badge" id="badge">Chưa mở camera</div>
-      <div class="flash" id="flash"><strong>✓ ĐÃ QUÉT</strong><span>Sẵn sàng mã tiếp theo</span></div>
+      <div class="flash" id="flash"><strong id="flashTitle">✓ ĐÃ QUÉT</strong><span id="flashSub">Sẵn sàng mã tiếp theo</span></div>
     </section>
 
     <div class="controls">
       <div class="row">
         <button id="start">MỞ CAMERA</button>
         <button id="stop" class="secondary" disabled>DỪNG</button>
+      </div>
+
+      <button id="connect" class="connect">KẾT NỐI WINDOWS</button>
+
+      <div class="panel" id="pcPanel">
+        <div class="label">Receiver Windows</div>
+        <div class="pcLine" id="pcLine">Chưa kết nối</div>
+        <div class="pcHint" id="pcHint">Bấm KẾT NỐI WINDOWS rồi quét QR đang hiện trên Receiver.</div>
       </div>
 
       <div class="panel">
@@ -92,7 +110,7 @@
     </section>
 
     <div class="tiny">
-      Bản này ưu tiên quét vùng giữa ở độ phân giải cao, đồng thời quét toàn khung định kỳ. Mã vừa đọc sẽ không bị lặp liên tục; khi bỏ mã ra rồi đưa lại, hoặc đưa một mã khác vào, hệ thống tự nhận tiếp.
+      Cách dùng lần đầu: chạy Receiver trên Windows → bấm KẾT NỐI WINDOWS trên iPhone → quét QR kết nối của Receiver. Sau đó chỉ cần đưa các mã QR cần nhập vào camera; mã khác sẽ tự được đọc và gửi tiếp. Cấu hình máy tính được lưu trên iPhone.
     </div>
 
     <canvas id="canvas"></canvas>
@@ -109,6 +127,7 @@
     const ctxFull = canvasFull.getContext('2d', { willReadFrequently: true });
     const startBtn = document.getElementById('start');
     const stopBtn = document.getElementById('stop');
+    const connectBtn = document.getElementById('connect');
     const cameraSelect = document.getElementById('cameraSelect');
     const zoomWrap = document.getElementById('zoomWrap');
     const zoom = document.getElementById('zoom');
@@ -121,6 +140,13 @@
     const value = document.getElementById('value');
     const frame = document.getElementById('frame');
     const flash = document.getElementById('flash');
+    const flashTitle = document.getElementById('flashTitle');
+    const flashSub = document.getElementById('flashSub');
+    const pcPanel = document.getElementById('pcPanel');
+    const pcLine = document.getElementById('pcLine');
+    const pcHint = document.getElementById('pcHint');
+
+    const RECEIVER_KEY = 'qr_windows_receiver_url_v1';
 
     let stream = null;
     let track = null;
@@ -130,8 +156,12 @@
     let scanTick = 0;
     let detector = null;
     let audioCtx = null;
+    let pairingMode = false;
+    let receiverUrl = localStorage.getItem(RECEIVER_KEY) || '';
+    let sendQueue = Promise.resolve();
 
-    // Chống đọc lặp cùng một mã khi người dùng vẫn đang giữ nguyên trước camera.
+    // Chống đọc lặp cùng một mã khi vẫn giữ nguyên mã trước camera.
+    // Mã KHÁC luôn được nhận ngay. Cùng mã chỉ được nhận lại sau khi rời khung đủ lâu.
     let lastAcceptedText = '';
     let lastSeenAt = 0;
     let rearmed = true;
@@ -147,28 +177,174 @@
       } catch (_) {}
     }
 
-    function beep() {
+    function tone(freq=980, duration=.11, gain=.09) {
       try {
         if (!audioCtx) return;
         if (audioCtx.state === 'suspended') audioCtx.resume();
         const o = audioCtx.createOscillator();
         const g = audioCtx.createGain();
         o.type = 'sine';
-        o.frequency.setValueAtTime(980, audioCtx.currentTime);
-        g.gain.setValueAtTime(0.09, audioCtx.currentTime);
-        g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.11);
+        o.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        g.gain.setValueAtTime(gain, audioCtx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
         o.connect(g); g.connect(audioCtx.destination);
-        o.start(); o.stop(audioCtx.currentTime + 0.12);
+        o.start(); o.stop(audioCtx.currentTime + duration + .01);
       } catch (_) {}
     }
 
-    function visualHit() {
-      frame.classList.add('hit');
+    function beepOK() { tone(980,.11,.09); }
+    function beepPair() { tone(720,.08,.08); setTimeout(() => tone(1080,.11,.08), 90); }
+    function beepError() { tone(310,.12,.08); setTimeout(() => tone(250,.16,.08), 130); }
+
+    function showFlash(kind, title, sub, ms=520) {
+      flash.classList.remove('pair','error');
+      frame.classList.remove('pair','error');
+      if (kind === 'pair') { flash.classList.add('pair'); frame.classList.add('pair'); }
+      else if (kind === 'error') { flash.classList.add('error'); frame.classList.add('error'); }
+      else frame.classList.add('hit');
+      flashTitle.textContent = title;
+      flashSub.textContent = sub || '';
       flash.classList.add('show');
       setTimeout(() => {
-        flash.classList.remove('show');
-        frame.classList.remove('hit');
-      }, 520);
+        flash.classList.remove('show','pair','error');
+        frame.classList.remove('hit','pair','error');
+      }, ms);
+    }
+
+    function receiverHost(url) {
+      try {
+        const u = new URL(url);
+        return u.host;
+      } catch (_) { return ''; }
+    }
+
+    function updateReceiverUI(state='saved', message='') {
+      pcPanel.classList.remove('connected','offline');
+      if (!receiverUrl) {
+        pcLine.textContent = 'Chưa kết nối';
+        pcHint.textContent = 'Bấm KẾT NỐI WINDOWS rồi quét QR đang hiện trên Receiver.';
+        return;
+      }
+      const host = receiverHost(receiverUrl) || 'Đã lưu Receiver';
+      if (state === 'online') {
+        pcPanel.classList.add('connected');
+        pcLine.textContent = '✓ Đã kết nối: ' + host;
+        pcHint.textContent = message || 'Sẵn sàng gửi QR sang Windows.';
+      } else if (state === 'offline') {
+        pcPanel.classList.add('offline');
+        pcLine.textContent = '⚠ Không liên lạc được: ' + host;
+        pcHint.textContent = message || 'Kiểm tra Receiver, Wi‑Fi/LAN và quyền Mạng cục bộ của Safari.';
+      } else {
+        pcLine.textContent = 'Đã lưu: ' + host;
+        pcHint.textContent = message || 'Sẽ kiểm tra kết nối khi gửi mã.';
+      }
+    }
+
+    function validReceiverUrl(text) {
+      try {
+        const u = new URL(String(text).trim());
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+        if (u.pathname !== '/scan') return null;
+        const token = u.searchParams.get('token');
+        if (!token || token.length < 12) return null;
+        return u.toString();
+      } catch (_) { return null; }
+    }
+
+    function healthUrlFromReceiver() {
+      try {
+        const u = new URL(receiverUrl);
+        u.pathname = '/health';
+        u.search = '';
+        u.hash = '';
+        return u.toString();
+      } catch (_) { return ''; }
+    }
+
+    function makeLocalRequest(url, init={}) {
+      const opts = Object.assign({ cache:'no-store' }, init);
+      // Trình duyệt hỗ trợ Local Network Access sẽ dùng gợi ý này.
+      // Trình duyệt chưa hỗ trợ sẽ bỏ qua thuộc tính lạ.
+      opts.targetAddressSpace = 'local';
+      try { return new Request(url, opts); }
+      catch (_) {
+        delete opts.targetAddressSpace;
+        return new Request(url, opts);
+      }
+    }
+
+    async function fetchWithTimeout(request, ms=3500) {
+      const controller = new AbortController();
+      const timerId = setTimeout(() => controller.abort(), ms);
+      try {
+        const cloneInit = {
+          method: request.method,
+          mode: request.mode,
+          cache: request.cache,
+          headers: request.headers,
+          signal: controller.signal
+        };
+        if (request.method !== 'GET' && request.method !== 'HEAD') cloneInit.body = await request.clone().text();
+        cloneInit.targetAddressSpace = 'local';
+        let req;
+        try { req = new Request(request.url, cloneInit); }
+        catch (_) { delete cloneInit.targetAddressSpace; req = new Request(request.url, cloneInit); }
+        return await fetch(req);
+      } finally { clearTimeout(timerId); }
+    }
+
+    async function checkReceiver() {
+      if (!receiverUrl) return false;
+      const url = healthUrlFromReceiver();
+      if (!url) return false;
+      try {
+        const req = makeLocalRequest(url, { method:'GET', mode:'no-cors' });
+        await fetchWithTimeout(req, 3000);
+        updateReceiverUI('online');
+        return true;
+      } catch (e) {
+        updateReceiverUI('offline', 'Nếu iPhone hỏi quyền Mạng cục bộ, hãy chọn Cho phép. Nếu không, kiểm tra Receiver đang chạy và hai thiết bị cùng mạng.');
+        return false;
+      }
+    }
+
+    async function sendToWindows(text, countAtScan) {
+      if (!receiverUrl) {
+        resultTitle.textContent = '✓ ĐÃ QUÉT · CHƯA KẾT NỐI WINDOWS';
+        return false;
+      }
+      try {
+        // Dùng text/plain + no-cors để đây là “simple request”, không phát sinh preflight.
+        // Receiver hiện tại đọc body text/plain trực tiếp thành nội dung cần gõ.
+        const req = makeLocalRequest(receiverUrl, {
+          method:'POST',
+          mode:'no-cors',
+          headers:{ 'Content-Type':'text/plain;charset=UTF-8' },
+          body:text
+        });
+        await fetchWithTimeout(req, 4000);
+        updateReceiverUI('online');
+        result.classList.remove('error');
+        result.classList.add('ok');
+        resultTitle.textContent = '✓ ĐÃ GỬI WINDOWS · Lần ' + countAtScan;
+        status('Đã gửi Windows · sẵn sàng mã tiếp theo');
+        return true;
+      } catch (e) {
+        result.classList.remove('ok');
+        result.classList.add('error');
+        resultTitle.textContent = '⚠ ĐÃ ĐỌC QR NHƯNG CHƯA GỬI ĐƯỢC WINDOWS';
+        status('Lỗi gửi Windows');
+        updateReceiverUI('offline');
+        showFlash('error','LỖI GỬI WINDOWS','Kiểm tra Receiver / Wi‑Fi / quyền Mạng cục bộ',900);
+        beepError();
+        return false;
+      }
+    }
+
+    function enqueueSend(text, countAtScan) {
+      sendQueue = sendQueue
+        .catch(() => {})
+        .then(() => sendToWindows(text, countAtScan));
     }
 
     async function stopCamera() {
@@ -178,6 +354,8 @@
       startBtn.disabled = false; stopBtn.disabled = true;
       cameraSelect.disabled = true; torchBtn.disabled = true;
       zoomWrap.style.display = 'none';
+      pairingMode = false;
+      frame.classList.remove('pair');
       status('Camera đã dừng');
     }
 
@@ -258,11 +436,52 @@
       }
     }
 
+    async function startPairing() {
+      initAudio();
+      if (!stream) await openCamera();
+      if (!stream) return;
+      pairingMode = true;
+      frame.classList.add('pair');
+      status('KẾT NỐI WINDOWS · quét QR đang hiện trên Receiver');
+      showFlash('pair','KẾT NỐI WINDOWS','Đưa QR của Receiver vào khung',650);
+    }
+
+    async function acceptPair(text) {
+      const url = validReceiverUrl(text);
+      if (!url) {
+        status('QR này không phải mã kết nối Receiver');
+        showFlash('error','KHÔNG PHẢI QR KẾT NỐI','Hãy quét QR đang hiện trên Receiver Windows',700);
+        beepError();
+        return;
+      }
+
+      receiverUrl = url;
+      localStorage.setItem(RECEIVER_KEY, receiverUrl);
+      pairingMode = false;
+      frame.classList.remove('pair');
+
+      // Không để QR kết nối vừa quét bị hiểu ngay thành dữ liệu nghiệp vụ.
+      lastAcceptedText = text;
+      lastSeenAt = Date.now();
+      rearmed = false;
+
+      updateReceiverUI('saved','Đang kiểm tra kết nối…');
+      showFlash('pair','✓ ĐÃ LƯU WINDOWS',receiverHost(receiverUrl),700);
+      beepPair();
+      status('Đã lưu Receiver · đang kiểm tra mạng');
+      await checkReceiver();
+    }
+
     function acceptCode(text) {
       const now = Date.now();
       if (!text) return;
 
-      // Mã khác luôn được nhận ngay. Cùng mã chỉ được nhận lại sau khi đã ra khỏi khung đủ lâu.
+      if (pairingMode) {
+        acceptPair(text);
+        return;
+      }
+
+      // Mã khác luôn nhận ngay. Cùng mã chỉ nhận lại sau khi đã rời khung đủ lâu.
       if (text === lastAcceptedText && !rearmed) {
         lastSeenAt = now;
         return;
@@ -272,26 +491,30 @@
       lastSeenAt = now;
       rearmed = false;
       scanCount += 1;
+      const thisCount = scanCount;
 
+      result.classList.remove('error');
       result.classList.add('ok');
-      resultTitle.textContent = '✓ ĐÃ TỰ NHẬN QR · Lần ' + scanCount;
+      resultTitle.textContent = receiverUrl ? '✓ ĐÃ ĐỌC QR · đang gửi Windows…' : '✓ ĐÃ TỰ NHẬN QR · Lần ' + thisCount;
       value.textContent = text;
-      status('Đã quét · đưa mã tiếp theo vào');
-      visualHit();
-      beep();
+      status(receiverUrl ? 'Đã đọc · đang gửi Windows' : 'Đã quét · chưa kết nối Windows');
+      showFlash('ok','✓ ĐÃ QUÉT',receiverUrl ? 'Đang gửi sang Windows' : 'Chưa kết nối Windows',520);
+      beepOK();
       if (navigator.vibrate) navigator.vibrate(120);
 
+      if (receiverUrl) enqueueSend(text, thisCount);
+
       setTimeout(() => {
-        if (stream && !rearmed) status('Giữ mã ra khỏi khung để sẵn sàng đọc lại');
-      }, 650);
+        if (stream && !rearmed && !pairingMode) status('Đưa mã khác vào để quét tiếp');
+      }, 700);
     }
 
     function noteNoCode() {
       if (!lastAcceptedText) return;
       const now = Date.now();
-      if (!rearmed && now - lastSeenAt > 600) {
+      if (!rearmed && now - lastSeenAt > 1300) {
         rearmed = true;
-        status('Sẵn sàng mã tiếp theo');
+        if (!pairingMode) status(receiverUrl ? 'Sẵn sàng mã tiếp theo · Windows đã lưu' : 'Sẵn sàng mã tiếp theo');
       }
     }
 
@@ -300,41 +523,42 @@
       const w = Math.max(1, Math.round(sw * scale));
       const h = Math.max(1, Math.round(sh * scale));
       if (canvasUse.width !== w || canvasUse.height !== h) {
-        canvasUse.width = w; canvasUse.height = h;
+        canvasUse.width = w;
+        canvasUse.height = h;
       }
       ctxUse.drawImage(video, sx, sy, sw, sh, 0, 0, w, h);
       const img = ctxUse.getImageData(0, 0, w, h);
-      return jsQR(img.data, w, h, { inversionAttempts:'dontInvert' });
+      const code = jsQR(img.data, w, h, { inversionAttempts:'attemptBoth' });
+      return code && code.data ? code.data : '';
     }
 
     async function scanFrame() {
       if (scanBusy || !video.videoWidth || !video.videoHeight) return;
       scanBusy = true;
-      let found = null;
+      let found = '';
       try {
-        // Ưu tiên bộ dò gốc của trình duyệt nếu có — thường nhanh hơn.
         if (detector) {
           try {
-            const hits = await detector.detect(video);
-            if (hits && hits.length && hits[0].rawValue) found = hits[0].rawValue;
+            const codes = await detector.detect(video);
+            if (codes && codes.length && codes[0].rawValue) found = codes[0].rawValue;
           } catch (_) {}
         }
 
-        // Dự phòng/tăng nhạy bằng jsQR: quét vùng giữa ở độ phân giải cao.
         if (!found && typeof jsQR === 'function') {
-          const vw = video.videoWidth, vh = video.videoHeight;
-          const sx = Math.round(vw * 0.08);
-          const sy = Math.round(vh * 0.12);
-          const sw = Math.round(vw * 0.84);
-          const sh = Math.round(vh * 0.76);
-          const code = decodeJsQR(ctx, canvas, sx, sy, sw, sh, 2200);
-          if (code && code.data) found = code.data;
+          const vw = video.videoWidth;
+          const vh = video.videoHeight;
 
-          // Cứ 3 lượt quét lại quét toàn khung để không bắt người dùng phải canh chính giữa quá chuẩn.
+          // Ưu tiên vùng giữa ở độ phân giải cao để mã CCCD nhỏ vẫn dễ bắt.
+          const sx = Math.round(vw * 0.04);
+          const sy = Math.round(vh * 0.12);
+          const sw = Math.round(vw * 0.92);
+          const sh = Math.round(vh * 0.76);
+          try { found = decodeJsQR(ctx, canvas, sx, sy, sw, sh, 2200); } catch (_) {}
+
+          // Định kỳ quét toàn khung để không bỏ sót mã nằm lệch khỏi vùng giữa.
           scanTick += 1;
-          if (!found && scanTick % 3 === 0) {
-            const codeFull = decodeJsQR(ctxFull, canvasFull, 0, 0, vw, vh, 1700);
-            if (codeFull && codeFull.data) found = codeFull.data;
+          if (!found && scanTick % 4 === 0) {
+            try { found = decodeJsQR(ctxFull, canvasFull, 0, 0, vw, vh, 1800); } catch (_) {}
           }
         }
 
@@ -345,8 +569,9 @@
       }
     }
 
-    startBtn.addEventListener('click', () => { initAudio(); openCamera(); });
+    startBtn.addEventListener('click', () => openCamera());
     stopBtn.addEventListener('click', stopCamera);
+    connectBtn.addEventListener('click', startPairing);
 
     cameraSelect.addEventListener('change', () => {
       const id = cameraSelect.value;
@@ -373,12 +598,17 @@
     });
 
     clearBtn.addEventListener('click', () => {
-      lastAcceptedText=''; lastSeenAt=0; rearmed=true; scanCount=0;
-      result.classList.remove('ok');
-      resultTitle.textContent='Chưa nhận được QR';
-      value.textContent='Đưa mã QR vào khung. Không cần bấm chụp.';
-      if (stream) status('Sẵn sàng quét');
+      lastAcceptedText = '';
+      lastSeenAt = 0;
+      rearmed = true;
+      result.classList.remove('ok','error');
+      resultTitle.textContent = 'Chưa nhận được QR';
+      value.textContent = 'Đưa mã QR vào khung. Không cần bấm chụp.';
+      status(stream ? 'Sẵn sàng mã tiếp theo' : 'Chưa mở camera');
     });
+
+    updateReceiverUI(receiverUrl ? 'saved' : 'none');
+    if (receiverUrl) checkReceiver();
 
     window.addEventListener('pagehide', stopCamera);
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
