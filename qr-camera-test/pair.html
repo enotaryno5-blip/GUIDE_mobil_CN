@@ -18,46 +18,42 @@
   <button id="open" hidden>MỞ TRÌNH QUÉT QR</button>
 </div>
 <script>
-(async()=>{
+(()=>{
   const KEY='qr_windows_receiver_url_v1';
   const title=document.getElementById('title'),hostEl=document.getElementById('host'),hint=document.getElementById('hint'),icon=document.getElementById('icon'),btn=document.getElementById('open');
-  let receiver='';
-  const go=()=>location.replace('./?paired='+Date.now());
+  const go=()=>location.replace('./?paired='+Date.now()+'&v=8');
   function fail(msg){icon.textContent='!';icon.classList.add('bad');title.textContent='Không lưu được kết nối';hint.textContent=msg;btn.hidden=false;btn.onclick=go;}
-  function wait(ms){return new Promise(r=>setTimeout(r,ms));}
   try{
     const raw=decodeURIComponent(location.hash.replace(/^#/,''));
     const p=raw.split('|');
-    if(p.length!==3) throw new Error('Mã kết nối không đúng định dạng.');
+    if(p.length!==3)throw new Error('Mã kết nối không đúng định dạng.');
     const ip=p[0].trim(),port=p[1].trim(),token=p[2].trim();
     const m=ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-    if(!m) throw new Error('Địa chỉ máy tính không hợp lệ.');
+    if(!m)throw new Error('Địa chỉ máy tính không hợp lệ.');
     const a=m.slice(1).map(Number);
-    if(a.some(n=>n<0||n>255)) throw new Error('Địa chỉ máy tính không hợp lệ.');
+    if(a.some(n=>n<0||n>255))throw new Error('Địa chỉ máy tính không hợp lệ.');
     const priv=a[0]===10||(a[0]===172&&a[1]>=16&&a[1]<=31)||(a[0]===192&&a[1]===168);
-    if(!priv) throw new Error('Địa chỉ không thuộc mạng LAN riêng.');
-    const pn=Number(port); if(!Number.isInteger(pn)||pn<1024||pn>65535) throw new Error('Cổng Receiver không hợp lệ.');
-    if(!/^[A-Za-z0-9_-]{12,128}$/.test(token)) throw new Error('Mã bảo mật Receiver không hợp lệ.');
-    receiver=`http://${ip}:${pn}/scan?token=${encodeURIComponent(token)}`;
+    if(!priv)throw new Error('Địa chỉ không thuộc mạng LAN riêng.');
+    const pn=Number(port);if(!Number.isInteger(pn)||pn<1024||pn>65535)throw new Error('Cổng Receiver không hợp lệ.');
+    if(!/^[A-Za-z0-9_-]{12,128}$/.test(token))throw new Error('Mã bảo mật Receiver không hợp lệ.');
+
+    const receiver=`http://${ip}:${pn}/scan?token=${encodeURIComponent(token)}`;
     localStorage.setItem(KEY,receiver);
     hostEl.textContent=`${ip}:${pn}`;
     title.textContent='✓ ĐÃ LƯU WINDOWS';
-    hint.textContent='Đang mở trình quét…';
+    hint.textContent='Đã lưu Receiver. Đang mở trình quét…';
     btn.hidden=false;btn.onclick=go;
 
-    // Trang này nằm NGAY trong scope của Service Worker. Vì vậy lần đầu trên
-    // iPhone mới có thể kích hoạt worker trước khi mở trang quét, tránh tình
-    // trạng phải quét mã kết nối lần thứ hai hoặc chờ rất lâu.
-    try{
-      if('serviceWorker' in navigator){
-        await navigator.serviceWorker.register('./sw.js?v=6',{scope:'./'});
-        await Promise.race([navigator.serviceWorker.ready,wait(1300)]);
-      }
-    }catch(_){ }
-
-    // Không bao giờ để màn hình này treo lâu: tối đa khoảng 1,4 giây là chuyển.
-    await wait(80);
-    go();
+    // Kích hoạt Service Worker nhưng chỉ chờ tối đa 850 ms để tránh treo Safari.
+    (async()=>{
+      try{
+        if('serviceWorker'in navigator){
+          navigator.serviceWorker.register('./sw.js?v=8',{scope:'./'}).catch(()=>{});
+          await Promise.race([navigator.serviceWorker.ready,new Promise(r=>setTimeout(r,850))]);
+        }
+      }catch(_){}
+      go();
+    })();
   }catch(e){fail(e&&e.message?e.message:String(e));}
 })();
 </script>
