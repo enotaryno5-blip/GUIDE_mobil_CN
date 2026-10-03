@@ -14,23 +14,15 @@
   <div id="icon" class="ok">✓</div>
   <h1 id="title">Đang kết nối Windows…</h1>
   <div id="host" class="host"></div>
-  <p id="hint" class="hint">Đang lưu Receiver và chuẩn bị trình quét. Chỉ cần làm bước này khi đổi máy tính, đổi mạng hoặc Receiver đổi mã kết nối.</p>
+  <p id="hint" class="hint">Đang lưu Receiver. Nếu không tự chuyển sang màn hình quét sau khoảng 1 giây, bấm nút bên dưới.</p>
   <button id="open" hidden>MỞ TRÌNH QUÉT QR</button>
 </div>
 <script>
-(async()=>{
+(()=>{
   const KEY='qr_windows_receiver_url_v1';
   const title=document.getElementById('title'),hostEl=document.getElementById('host'),hint=document.getElementById('hint'),icon=document.getElementById('icon'),btn=document.getElementById('open');
-  const go=()=>location.replace('./qr-camera-test/?paired='+Date.now());
+  const go=()=>{ location.href='./qr-camera-test/?paired='+Date.now(); };
   function fail(msg){icon.textContent='!';icon.classList.add('bad');title.textContent='Không lưu được kết nối';hint.textContent=msg;btn.hidden=false;btn.onclick=go;}
-  function waitWorker(worker,ms=4500){
-    return new Promise(resolve=>{
-      if(!worker||worker.state==='activated') return resolve();
-      const t=setTimeout(resolve,ms);
-      const done=()=>{if(worker.state==='activated'||worker.state==='redundant'){clearTimeout(t);worker.removeEventListener('statechange',done);resolve();}};
-      worker.addEventListener('statechange',done);
-    });
-  }
   try{
     const raw=decodeURIComponent(location.hash.replace(/^#/,''));
     const p=raw.split('|');
@@ -44,25 +36,26 @@
     if(!priv) throw new Error('Địa chỉ không thuộc mạng LAN riêng.');
     const pn=Number(port); if(!Number.isInteger(pn)||pn<1024||pn>65535) throw new Error('Cổng Receiver không hợp lệ.');
     if(!/^[A-Za-z0-9_-]{12,128}$/.test(token)) throw new Error('Mã bảo mật Receiver không hợp lệ.');
+
     const receiver=`http://${ip}:${pn}/scan?token=${encodeURIComponent(token)}`;
     localStorage.setItem(KEY,receiver);
     hostEl.textContent=`${ip}:${pn}`;
     title.textContent='✓ ĐÃ LƯU WINDOWS';
-    hint.textContent='Đang chuẩn bị trình quét lần đầu…';
+    hint.textContent='Đã lưu Receiver. Đang mở trình quét… Nếu không tự chuyển, bấm nút bên dưới.';
 
-    try{
+    // Luôn cho người dùng một lối đi thủ công ngay lập tức.
+    btn.hidden=false;
+    btn.onclick=go;
+
+    // Không chờ Service Worker: một số Safari mở từ Camera có thể treo ở bước chờ này.
+    // Việc đăng ký vẫn chạy nền; trang quét tự xử lý cache khi mở.
+    try {
       if('serviceWorker' in navigator){
-        const reg=await navigator.serviceWorker.register('./qr-camera-test/sw.js?v=5',{scope:'./qr-camera-test/'});
-        try{await reg.update();}catch(_){ }
-        const worker=reg.installing||reg.waiting;
-        if(worker) await waitWorker(worker);
-        try{await navigator.serviceWorker.ready;}catch(_){ }
-        await new Promise(r=>setTimeout(r,350));
+        navigator.serviceWorker.register('./qr-camera-test/sw.js?v=6',{scope:'./qr-camera-test/'}).catch(()=>{});
       }
-    }catch(_){ }
+    } catch(_) {}
 
-    btn.hidden=false;btn.onclick=go;
-    setTimeout(go,450);
+    setTimeout(go,700);
   }catch(e){fail(e&&e.message?e.message:String(e));}
 })();
 </script>
