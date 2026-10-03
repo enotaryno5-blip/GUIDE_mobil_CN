@@ -2,12 +2,11 @@
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '');
   if (!isMobile) return;
 
-  // V15: yêu cầu zoom ngay trong lúc xin camera. Một số iPhone (đặc biệt iPhone 13)
-  // cho kéo zoom bằng tay nhưng từ chối applyConstraints nếu gọi muộn sau khi stream đã chạy.
-  // Đặt zoom như "ideal" ở chính getUserMedia giúp WebKit có cơ hội mở track ở gần 2x ngay từ đầu.
+  // V16: vẫn yêu cầu zoom ngay trong lúc xin camera. Một số iPhone cho phép tự đặt 2x,
+  // nhưng iPhone 13 có thể chỉ chấp nhận đổi zoom khi lệnh phát sinh trực tiếp từ thao tác chạm.
   try {
     const md = navigator.mediaDevices;
-    if (md && md.getUserMedia && !md.__qrAcquireZoomV15) {
+    if (md && md.getUserMedia && !md.__qrAcquireZoomV16) {
       const nativeGUM = md.getUserMedia.bind(md);
       const wrappedGUM = async function(constraints) {
         let tuned = constraints;
@@ -33,7 +32,7 @@
       catch (_) {
         try { Object.defineProperty(md, 'getUserMedia', { value: wrappedGUM, configurable: true }); } catch (__) {}
       }
-      try { md.__qrAcquireZoomV15 = true; } catch (_) {}
+      try { md.__qrAcquireZoomV16 = true; } catch (_) {}
     }
   } catch (_) {}
 
@@ -49,7 +48,7 @@
   } catch (_) {}
 
   // Tầng nhanh: chỉ giải mã phần giữa ảnh trước. Đây là "zoom số cho bộ giải mã",
-  // nên ngay cả khi iPhone 13 không chịu tự đổi zoom quang học thì QR ở giữa khung
+  // nên ngay cả khi iPhone không chịu tự đổi zoom camera thì QR ở giữa khung
   // vẫn được xử lý trên vùng nhỏ hơn, ít nền thừa hơn và nhanh hơn.
   let fastBuffer = null;
   let qrCallCount = 0;
@@ -82,7 +81,7 @@
   }
 
   function installFastJsQR() {
-    if (typeof window.jsQR !== 'function' || window.jsQR.__fastCenterV15) return false;
+    if (typeof window.jsQR !== 'function' || window.jsQR.__fastCenterV16) return false;
     const native = window.jsQR;
     const wrapped = function(data, w, h, opts) {
       qrCallCount++;
@@ -98,7 +97,7 @@
       } catch (_) {}
       return native(data, w, h, opts);
     };
-    wrapped.__fastCenterV15 = true;
+    wrapped.__fastCenterV16 = true;
     window.jsQR = wrapped;
     return true;
   }
@@ -181,6 +180,86 @@
     return Number.isFinite(current) && Math.abs(current - target) <= 0.12;
   }
 
+  function setBadge(text) {
+    const b = document.getElementById('badge');
+    if (b) b.textContent = text;
+  }
+
+  // Fallback chỉ hiện khi tự zoom không thành công. Nút này tạo thao tác người dùng thật,
+  // cùng loại kích hoạt đã được xác nhận là hoạt động khi kéo thanh zoom bằng tay trên iPhone 13.
+  function installTrustedZoomFallback() {
+    const wrap = document.getElementById('zoomWrap');
+    const z = document.getElementById('zoom');
+    const zv = document.getElementById('zoomValue');
+    if (!wrap || !z || document.getElementById('zoom2Fallback')) return;
+
+    const btn = document.createElement('button');
+    btn.id = 'zoom2Fallback';
+    btn.type = 'button';
+    btn.className = 'secondary';
+    btn.textContent = 'BẬT ZOOM 2×';
+    btn.style.width = '100%';
+    btn.style.marginTop = '10px';
+    btn.style.display = 'none';
+    wrap.appendChild(btn);
+
+    function readState() {
+      const track = getLiveTrack();
+      if (!track) return { track:null, target:2, current:NaN, supported:false };
+      let caps = {};
+      try { caps = track.getCapabilities ? track.getCapabilities() : {}; } catch (_) {}
+      if (!caps.zoom || !Number.isFinite(caps.zoom.min) || !Number.isFinite(caps.zoom.max) || caps.zoom.max <= caps.zoom.min) {
+        return { track, target:2, current:NaN, supported:false };
+      }
+      const target = Math.max(caps.zoom.min, Math.min(caps.zoom.max, 2.0));
+      let current = NaN;
+      try { current = Number(track.getSettings?.().zoom); } catch (_) {}
+      return { track, target, current, supported:true };
+    }
+
+    function refresh() {
+      const s = readState();
+      if (!s.supported) { btn.style.display = 'none'; return; }
+      const ok = Number.isFinite(s.current) && Math.abs(s.current - s.target) <= 0.12;
+      btn.style.display = ok ? 'none' : 'block';
+    }
+
+    btn.addEventListener('click', async () => {
+      const s = readState();
+      if (!s.supported || !s.track) return;
+      btn.disabled = true;
+      btn.textContent = 'ĐANG BẬT 2×…';
+
+      // Gọi cả đường input đang dùng khi kéo tay và applyConstraints trực tiếp,
+      // ngay trong handler click được Safari coi là thao tác người dùng.
+      z.value = String(s.target);
+      if (zv) zv.textContent = s.target.toFixed(1) + '×';
+      try { z.dispatchEvent(new Event('input', { bubbles:true })); } catch (_) {}
+      const directPromise = applyZoomDirect(s.track, s.target);
+      try { await directPromise; } catch (_) {}
+      await new Promise(r => setTimeout(r, 140));
+
+      let current = NaN;
+      try { current = Number(s.track.getSettings?.().zoom); } catch (_) {}
+      if (Number.isFinite(current)) {
+        z.value = String(current);
+        if (zv) zv.textContent = current.toFixed(1) + '×';
+      }
+      const ok = Number.isFinite(current) && Math.abs(current - s.target) <= 0.12;
+      if (ok) {
+        btn.style.display = 'none';
+        setBadge('Zoom 2.0× · đang tự quét QR');
+      } else {
+        btn.textContent = 'THỬ LẠI ZOOM 2×';
+        setBadge('Safari chưa nhận zoom 2× · có thể kéo thanh zoom');
+      }
+      btn.disabled = false;
+    });
+
+    // Cho tự zoom đủ thời gian trước; chỉ hiện nút nếu máy vẫn còn ở mức khác 2x.
+    [900, 1500, 2500, 4000].forEach(ms => setTimeout(refresh, ms));
+  }
+
   async function keepContinuousFocus() {
     const track = getLiveTrack();
     if (!track) return;
@@ -196,6 +275,7 @@
     [60, 160, 320, 600, 1000, 1600, 2400, 3500, 5000].forEach(ms => {
       setTimeout(() => { forceZoom2(); keepContinuousFocus(); }, ms);
     });
+    [500, 900, 1400].forEach(ms => setTimeout(installTrustedZoomFallback, ms));
   }
 
   function startWatch() {
@@ -212,6 +292,7 @@
     let n = 0;
     const watch = setInterval(() => {
       forceZoom2();
+      installTrustedZoomFallback();
       if (++n > 80) clearInterval(watch);
     }, 300);
   }
