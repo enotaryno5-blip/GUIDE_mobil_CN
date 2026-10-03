@@ -14,15 +14,17 @@
   <div id="icon" class="ok">✓</div>
   <h1 id="title">Đang kết nối Windows…</h1>
   <div id="host" class="host"></div>
-  <p id="hint" class="hint">Đang lưu Receiver. Sau đó trình quét sẽ tự mở.</p>
+  <p id="hint" class="hint">Đang chuẩn bị trình quét. Không cần quét mã kết nối lần thứ hai.</p>
   <button id="open" hidden>MỞ TRÌNH QUÉT QR</button>
 </div>
 <script>
-(()=>{
+(async()=>{
   const KEY='qr_windows_receiver_url_v1';
   const title=document.getElementById('title'),hostEl=document.getElementById('host'),hint=document.getElementById('hint'),icon=document.getElementById('icon'),btn=document.getElementById('open');
-  const go=()=>location.replace('./?paired='+Date.now()+'&v=8');
-  function fail(msg){icon.textContent='!';icon.classList.add('bad');title.textContent='Không lưu được kết nối';hint.textContent=msg;btn.hidden=false;btn.onclick=go;}
+  const wait=ms=>new Promise(r=>setTimeout(r,ms));
+  let receiver='';
+  const go=()=>location.replace('./?paired='+Date.now()+'&v=9#receiver='+encodeURIComponent(receiver));
+  function fail(msg){icon.textContent='!';icon.classList.add('bad');title.textContent='Không lưu được kết nối';hint.textContent=msg;btn.hidden=false;btn.onclick=()=>location.replace('./');}
   try{
     const raw=decodeURIComponent(location.hash.replace(/^#/,''));
     const p=raw.split('|');
@@ -37,23 +39,31 @@
     const pn=Number(port);if(!Number.isInteger(pn)||pn<1024||pn>65535)throw new Error('Cổng Receiver không hợp lệ.');
     if(!/^[A-Za-z0-9_-]{12,128}$/.test(token))throw new Error('Mã bảo mật Receiver không hợp lệ.');
 
-    const receiver=`http://${ip}:${pn}/scan?token=${encodeURIComponent(token)}`;
+    receiver=`http://${ip}:${pn}/scan?token=${encodeURIComponent(token)}`;
     localStorage.setItem(KEY,receiver);
     hostEl.textContent=`${ip}:${pn}`;
     title.textContent='✓ ĐÃ LƯU WINDOWS';
-    hint.textContent='Đã lưu Receiver. Đang mở trình quét…';
+    hint.textContent='Đang mở trình quét. Cổng và mã bảo mật sẽ được truyền thẳng sang màn hình quét.';
     btn.hidden=false;btn.onclick=go;
 
-    // Kích hoạt Service Worker nhưng chỉ chờ tối đa 850 ms để tránh treo Safari.
-    (async()=>{
+    // Bảo đảm Service Worker v9 đã kiểm soát trang trước khi mở scanner.
+    // Nếu là iPhone mới, trang có thể tự nạp lại đúng 1 lần; người dùng không phải quét lại QR.
+    if('serviceWorker' in navigator){
       try{
-        if('serviceWorker'in navigator){
-          navigator.serviceWorker.register('./sw.js?v=8',{scope:'./'}).catch(()=>{});
-          await Promise.race([navigator.serviceWorker.ready,new Promise(r=>setTimeout(r,850))]);
+        await navigator.serviceWorker.register('./sw.js?v=9',{scope:'./'});
+        await Promise.race([navigator.serviceWorker.ready,wait(1400)]);
+        if(!navigator.serviceWorker.controller){
+          const u=new URL(location.href);
+          if(!u.searchParams.has('sw')){
+            u.searchParams.set('sw','1');
+            location.replace(u.pathname+u.search+u.hash);
+            return;
+          }
+          await wait(250);
         }
       }catch(_){}
-      go();
-    })();
+    }
+    go();
   }catch(e){fail(e&&e.message?e.message:String(e));}
 })();
 </script>
