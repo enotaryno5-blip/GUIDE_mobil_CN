@@ -1,6 +1,4 @@
 (() => {
-  if (!window.fetch) return;
-  const nativeFetch = window.fetch.bind(window);
   const KEY='qr_windows_receiver_url_v1';
 
   function isPrivateIPv4(host){
@@ -10,6 +8,34 @@
     if(a.some(n=>n<0||n>255))return false;
     return a[0]===10||(a[0]===172&&a[1]>=16&&a[1]<=31)||(a[0]===192&&a[1]===168)||(a[0]===169&&a[1]===254);
   }
+
+  function validReceiver(raw){
+    try{
+      const u=new URL(String(raw||''));
+      if(u.protocol!=='http:'||!isPrivateIPv4(u.hostname)||u.pathname!=='/scan')return '';
+      const token=u.searchParams.get('token')||'';
+      if(token.length<12)return '';
+      return u.toString();
+    }catch(_){return ''}
+  }
+
+  // Quan trọng: bridge được nạp ở HEAD trước script chính của trình quét.
+  // Nếu lần ghép nối đầu truyền Receiver qua #receiver=..., lưu nó NGAY tại đây
+  // để script chính đọc được cổng/token ngay từ lần mở đầu tiên.
+  try{
+    const h=location.hash||'';
+    if(h.startsWith('#receiver=')){
+      const receiver=validReceiver(decodeURIComponent(h.slice(10)));
+      if(receiver){
+        localStorage.setItem(KEY,receiver);
+        history.replaceState(null,'',location.pathname+location.search);
+      }
+    }
+  }catch(_){}
+
+  if(!window.fetch)return;
+  const nativeFetch=window.fetch.bind(window);
+
   function localURL(input){
     try{const raw=input instanceof Request?input.url:String(input);const u=new URL(raw,location.href);if(u.protocol!=='http:'||!isPrivateIPv4(u.hostname))return null;return u}catch(_){return null}
   }
