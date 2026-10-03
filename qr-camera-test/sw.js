@@ -1,4 +1,4 @@
-const CACHE='qr-windows-v10';
+const CACHE='qr-windows-v11';
 const CORE=['./','./index.html','./pair.html','./manifest.webmanifest','./icon.svg','./bridge.js'];
 
 self.addEventListener('install',e=>{
@@ -15,7 +15,7 @@ self.addEventListener('activate',e=>{
 
 function injectBridge(html){
   if(html.includes('bridge.js'))return html;
-  const tag='<script src="./bridge.js?v=10"></script>';
+  const tag='<script src="./bridge.js?v=11"></script>';
   if(html.includes('</head>'))return html.replace('</head>',tag+'</head>');
   return html.replace('</body>',tag+'</body>');
 }
