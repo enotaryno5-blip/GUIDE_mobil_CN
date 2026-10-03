@@ -23,7 +23,7 @@
   const title=document.getElementById('title'),hostEl=document.getElementById('host'),hint=document.getElementById('hint'),icon=document.getElementById('icon'),btn=document.getElementById('open');
   const wait=ms=>new Promise(r=>setTimeout(r,ms));
   let receiver='';
-  const go=()=>location.replace('./?paired='+Date.now()+'&v=9#receiver='+encodeURIComponent(receiver));
+  const go=()=>location.replace('./?paired='+Date.now()+'&v=10#receiver='+encodeURIComponent(receiver));
   function fail(msg){icon.textContent='!';icon.classList.add('bad');title.textContent='Không lưu được kết nối';hint.textContent=msg;btn.hidden=false;btn.onclick=()=>location.replace('./');}
   try{
     const raw=decodeURIComponent(location.hash.replace(/^#/,''));
@@ -46,11 +46,9 @@
     hint.textContent='Đang mở trình quét. Cổng và mã bảo mật sẽ được truyền thẳng sang màn hình quét.';
     btn.hidden=false;btn.onclick=go;
 
-    // Bảo đảm Service Worker v9 đã kiểm soát trang trước khi mở scanner.
-    // Nếu là iPhone mới, trang có thể tự nạp lại đúng 1 lần; người dùng không phải quét lại QR.
     if('serviceWorker' in navigator){
       try{
-        await navigator.serviceWorker.register('./sw.js?v=9',{scope:'./'});
+        await navigator.serviceWorker.register('./sw.js?v=10',{scope:'./'});
         await Promise.race([navigator.serviceWorker.ready,wait(1400)]);
         if(!navigator.serviceWorker.controller){
           const u=new URL(location.href);
