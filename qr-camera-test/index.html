@@ -19,10 +19,15 @@
     .sub { color:#aeb9ca; font-size:14px; margin-bottom:12px; }
     .camera { position:relative; background:#000; border-radius:18px; overflow:hidden; aspect-ratio:3/4; box-shadow:0 10px 30px #0008; }
     video { width:100%; height:100%; object-fit:contain; background:#000; }
-    .frame { position:absolute; inset:22% 10%; border:3px solid #5ee36e; border-radius:18px; box-shadow:0 0 0 9999px #0003; pointer-events:none; }
-    .scanline { position:absolute; left:12%; right:12%; top:50%; height:2px; background:#5ee36e; box-shadow:0 0 12px #5ee36e; animation:scan 1.7s ease-in-out infinite alternate; pointer-events:none; }
-    @keyframes scan { from { transform:translateY(-120px); } to { transform:translateY(120px); } }
-    .badge { position:absolute; top:10px; left:10px; background:#000a; border:1px solid #ffffff33; border-radius:999px; padding:7px 10px; font-size:13px; }
+    .frame { position:absolute; inset:18% 7%; border:3px solid #5ee36e; border-radius:18px; box-shadow:0 0 0 9999px #0002; pointer-events:none; transition:.15s ease; }
+    .frame.hit { border-width:6px; box-shadow:0 0 30px #5ee36e,0 0 0 9999px #0b5a2440; }
+    .scanline { position:absolute; left:9%; right:9%; top:50%; height:2px; background:#5ee36e; box-shadow:0 0 12px #5ee36e; animation:scan 1.25s ease-in-out infinite alternate; pointer-events:none; }
+    @keyframes scan { from { transform:translateY(-150px); } to { transform:translateY(150px); } }
+    .badge { position:absolute; top:10px; left:10px; background:#000b; border:1px solid #ffffff33; border-radius:999px; padding:7px 10px; font-size:13px; z-index:4; }
+    .flash { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; background:#087a36dd; opacity:0; pointer-events:none; transition:opacity .12s ease; z-index:3; text-align:center; }
+    .flash.show { opacity:1; }
+    .flash strong { font-size:40px; line-height:1.05; }
+    .flash span { margin-top:10px; font-size:17px; font-weight:700; }
     .controls { display:grid; gap:10px; margin-top:12px; }
     .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
     button,select,input { font:inherit; }
@@ -45,14 +50,15 @@
 </head>
 <body>
   <main class="app">
-    <h1>QR Camera Test — iPhone 16 Pro Max</h1>
-    <div class="sub">Chỉ kiểm tra: tự bắt QR + khả năng lấy nét/zoom. Chưa gửi sang Windows.</div>
+    <h1>QR Camera Test — chế độ nhạy + liên tục</h1>
+    <div class="sub">Tự quét liên tục. Đọc xong mã này, đưa mã khác vào là tự đọc tiếp — không cần bấm lệnh.</div>
 
     <section class="camera">
       <video id="video" playsinline muted autoplay></video>
-      <div class="frame"></div>
+      <div class="frame" id="frame"></div>
       <div class="scanline"></div>
       <div class="badge" id="badge">Chưa mở camera</div>
+      <div class="flash" id="flash"><strong>✓ ĐÃ QUÉT</strong><span>Sẵn sàng mã tiếp theo</span></div>
     </section>
 
     <div class="controls">
@@ -86,11 +92,11 @@
     </section>
 
     <div class="tiny">
-      Trang thử xử lý hình camera ngay trên iPhone; không tải ảnh hoặc nội dung QR lên máy chủ.
-      Nếu danh sách có nhiều camera sau, hãy thử từng camera để tìm camera lấy nét gần tốt nhất.
+      Bản này ưu tiên quét vùng giữa ở độ phân giải cao, đồng thời quét toàn khung định kỳ. Mã vừa đọc sẽ không bị lặp liên tục; khi bỏ mã ra rồi đưa lại, hoặc đưa một mã khác vào, hệ thống tự nhận tiếp.
     </div>
 
     <canvas id="canvas"></canvas>
+    <canvas id="canvasFull"></canvas>
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
@@ -98,7 +104,9 @@
   (() => {
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
+    const canvasFull = document.getElementById('canvasFull');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const ctxFull = canvasFull.getContext('2d', { willReadFrequently: true });
     const startBtn = document.getElementById('start');
     const stopBtn = document.getElementById('stop');
     const cameraSelect = document.getElementById('cameraSelect');
@@ -111,15 +119,57 @@
     const result = document.getElementById('result');
     const resultTitle = document.getElementById('resultTitle');
     const value = document.getElementById('value');
+    const frame = document.getElementById('frame');
+    const flash = document.getElementById('flash');
 
     let stream = null;
     let track = null;
     let timer = null;
     let torchOn = false;
-    let lastText = '';
-    let lastHit = 0;
+    let scanBusy = false;
+    let scanTick = 0;
+    let detector = null;
+    let audioCtx = null;
+
+    // Chống đọc lặp cùng một mã khi người dùng vẫn đang giữ nguyên trước camera.
+    let lastAcceptedText = '';
+    let lastSeenAt = 0;
+    let rearmed = true;
+    let scanCount = 0;
 
     function status(t) { badge.textContent = t; }
+
+    function initAudio() {
+      try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (AC && !audioCtx) audioCtx = new AC();
+        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+      } catch (_) {}
+    }
+
+    function beep() {
+      try {
+        if (!audioCtx) return;
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const o = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(980, audioCtx.currentTime);
+        g.gain.setValueAtTime(0.09, audioCtx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.11);
+        o.connect(g); g.connect(audioCtx.destination);
+        o.start(); o.stop(audioCtx.currentTime + 0.12);
+      } catch (_) {}
+    }
+
+    function visualHit() {
+      frame.classList.add('hit');
+      flash.classList.add('show');
+      setTimeout(() => {
+        flash.classList.remove('show');
+        frame.classList.remove('hit');
+      }, 520);
+    }
 
     async function stopCamera() {
       if (timer) { clearInterval(timer); timer = null; }
@@ -145,8 +195,19 @@
       cameraSelect.disabled = cams.length < 2;
     }
 
+    async function setupDetector() {
+      detector = null;
+      try {
+        if ('BarcodeDetector' in window) {
+          const supported = await BarcodeDetector.getSupportedFormats();
+          if (supported.includes('qr_code')) detector = new BarcodeDetector({ formats:['qr_code'] });
+        }
+      } catch (_) { detector = null; }
+    }
+
     async function openCamera(deviceId) {
       await stopCamera();
+      initAudio();
       status('Đang mở camera…');
       const videoConstraint = {
         width: { ideal: 3840 },
@@ -164,13 +225,13 @@
         const settings = track.getSettings ? track.getSettings() : {};
         const caps = track.getCapabilities ? track.getCapabilities() : {};
 
-        // Yêu cầu lấy nét liên tục nếu trình duyệt/camera cho phép.
         try {
           if (caps.focusMode && caps.focusMode.includes('continuous')) {
             await track.applyConstraints({ advanced:[{ focusMode:'continuous' }] });
           }
         } catch (_) {}
 
+        await setupDetector();
         await listCameras(settings.deviceId || track.getSettings().deviceId);
 
         if (caps.zoom && Number.isFinite(caps.zoom.min) && Number.isFinite(caps.zoom.max) && caps.zoom.max > caps.zoom.min) {
@@ -187,8 +248,8 @@
         torchBtn.disabled = !(caps.torch);
         torchOn = false; torchBtn.textContent = 'ĐÈN: TẮT';
         startBtn.disabled = true; stopBtn.disabled = false;
-        status('Đang tự quét QR');
-        timer = setInterval(scanFrame, 160);
+        status(detector ? 'Đang tự quét QR · bộ dò nhanh' : 'Đang tự quét QR · bộ dò tăng nhạy');
+        timer = setInterval(scanFrame, 85);
       } catch (e) {
         status('Không mở được camera');
         resultTitle.textContent = 'Lỗi camera';
@@ -197,42 +258,94 @@
       }
     }
 
-    function success(text) {
+    function acceptCode(text) {
       const now = Date.now();
-      if (text === lastText && now - lastHit < 2500) return;
-      lastText = text; lastHit = now;
+      if (!text) return;
+
+      // Mã khác luôn được nhận ngay. Cùng mã chỉ được nhận lại sau khi đã ra khỏi khung đủ lâu.
+      if (text === lastAcceptedText && !rearmed) {
+        lastSeenAt = now;
+        return;
+      }
+
+      lastAcceptedText = text;
+      lastSeenAt = now;
+      rearmed = false;
+      scanCount += 1;
+
       result.classList.add('ok');
-      resultTitle.textContent = '✓ ĐÃ TỰ NHẬN QR';
+      resultTitle.textContent = '✓ ĐÃ TỰ NHẬN QR · Lần ' + scanCount;
       value.textContent = text;
-      status('Đã bắt được QR');
+      status('Đã quét · đưa mã tiếp theo vào');
+      visualHit();
+      beep();
       if (navigator.vibrate) navigator.vibrate(120);
+
+      setTimeout(() => {
+        if (stream && !rearmed) status('Giữ mã ra khỏi khung để sẵn sàng đọc lại');
+      }, 650);
+    }
+
+    function noteNoCode() {
+      if (!lastAcceptedText) return;
+      const now = Date.now();
+      if (!rearmed && now - lastSeenAt > 600) {
+        rearmed = true;
+        status('Sẵn sàng mã tiếp theo');
+      }
+    }
+
+    function decodeJsQR(ctxUse, canvasUse, sx, sy, sw, sh, outMaxW) {
+      const scale = Math.min(1, outMaxW / sw);
+      const w = Math.max(1, Math.round(sw * scale));
+      const h = Math.max(1, Math.round(sh * scale));
+      if (canvasUse.width !== w || canvasUse.height !== h) {
+        canvasUse.width = w; canvasUse.height = h;
+      }
+      ctxUse.drawImage(video, sx, sy, sw, sh, 0, 0, w, h);
+      const img = ctxUse.getImageData(0, 0, w, h);
+      return jsQR(img.data, w, h, { inversionAttempts:'dontInvert' });
+    }
+
+    async function scanFrame() {
+      if (scanBusy || !video.videoWidth || !video.videoHeight) return;
+      scanBusy = true;
+      let found = null;
       try {
-        const AC = window.AudioContext || window.webkitAudioContext;
-        const ac = new AC();
-        const o = ac.createOscillator();
-        const g = ac.createGain();
-        o.frequency.value = 880; g.gain.value = 0.06;
-        o.connect(g); g.connect(ac.destination); o.start();
-        setTimeout(() => { o.stop(); ac.close(); }, 90);
-      } catch (_) {}
-      setTimeout(() => { if (stream) status('Đang tự quét QR'); }, 900);
+        // Ưu tiên bộ dò gốc của trình duyệt nếu có — thường nhanh hơn.
+        if (detector) {
+          try {
+            const hits = await detector.detect(video);
+            if (hits && hits.length && hits[0].rawValue) found = hits[0].rawValue;
+          } catch (_) {}
+        }
+
+        // Dự phòng/tăng nhạy bằng jsQR: quét vùng giữa ở độ phân giải cao.
+        if (!found && typeof jsQR === 'function') {
+          const vw = video.videoWidth, vh = video.videoHeight;
+          const sx = Math.round(vw * 0.08);
+          const sy = Math.round(vh * 0.12);
+          const sw = Math.round(vw * 0.84);
+          const sh = Math.round(vh * 0.76);
+          const code = decodeJsQR(ctx, canvas, sx, sy, sw, sh, 2200);
+          if (code && code.data) found = code.data;
+
+          // Cứ 3 lượt quét lại quét toàn khung để không bắt người dùng phải canh chính giữa quá chuẩn.
+          scanTick += 1;
+          if (!found && scanTick % 3 === 0) {
+            const codeFull = decodeJsQR(ctxFull, canvasFull, 0, 0, vw, vh, 1700);
+            if (codeFull && codeFull.data) found = codeFull.data;
+          }
+        }
+
+        if (found) acceptCode(found);
+        else noteNoCode();
+      } finally {
+        scanBusy = false;
+      }
     }
 
-    function scanFrame() {
-      if (!video.videoWidth || !video.videoHeight || typeof jsQR !== 'function') return;
-      const vw = video.videoWidth, vh = video.videoHeight;
-      const maxW = 1800;
-      const scale = Math.min(1, maxW / vw);
-      const w = Math.max(1, Math.round(vw * scale));
-      const h = Math.max(1, Math.round(vh * scale));
-      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
-      ctx.drawImage(video, 0, 0, w, h);
-      const img = ctx.getImageData(0, 0, w, h);
-      const code = jsQR(img.data, w, h, { inversionAttempts:'dontInvert' });
-      if (code && code.data) success(code.data);
-    }
-
-    startBtn.addEventListener('click', () => openCamera());
+    startBtn.addEventListener('click', () => { initAudio(); openCamera(); });
     stopBtn.addEventListener('click', stopCamera);
 
     cameraSelect.addEventListener('change', () => {
@@ -260,10 +373,11 @@
     });
 
     clearBtn.addEventListener('click', () => {
-      lastText=''; lastHit=0;
+      lastAcceptedText=''; lastSeenAt=0; rearmed=true; scanCount=0;
       result.classList.remove('ok');
       resultTitle.textContent='Chưa nhận được QR';
       value.textContent='Đưa mã QR vào khung. Không cần bấm chụp.';
+      if (stream) status('Sẵn sàng quét');
     });
 
     window.addEventListener('pagehide', stopCamera);
