@@ -1,4 +1,4 @@
-const CACHE='qr-windows-v8';
+const CACHE='qr-windows-v9';
 const CORE=['./','./index.html','./pair.html','./manifest.webmanifest','./icon.svg','./bridge.js'];
 
 self.addEventListener('install',e=>{
@@ -13,6 +13,13 @@ self.addEventListener('activate',e=>{
   ]));
 });
 
+function injectBridge(html){
+  if(html.includes('bridge.js'))return html;
+  const tag='<script src="./bridge.js?v=9"></script>';
+  if(html.includes('</head>'))return html.replace('</head>',tag+'</head>');
+  return html.replace('</body>',tag+'</body>');
+}
+
 self.addEventListener('fetch',e=>{
   if(e.request.method!=='GET')return;
   const url=new URL(e.request.url);
@@ -21,15 +28,13 @@ self.addEventListener('fetch',e=>{
     e.respondWith((async()=>{
       try{
         const r=await fetch(e.request,{cache:'no-store'});
-        let html=await r.text();
-        if(!html.includes('bridge.js'))html=html.replace('</body>','<script src="./bridge.js?v=8"></script></body>');
+        const html=injectBridge(await r.text());
         const h=new Headers(r.headers);h.set('Content-Type','text/html; charset=utf-8');h.set('Cache-Control','no-store');
         return new Response(html,{status:r.status,statusText:r.statusText,headers:h});
       }catch(err){
         const cached=await caches.match('./index.html');
         if(!cached)throw err;
-        let html=await cached.text();
-        if(!html.includes('bridge.js'))html=html.replace('</body>','<script src="./bridge.js?v=8"></script></body>');
+        const html=injectBridge(await cached.text());
         return new Response(html,{headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}});
       }
     })());
