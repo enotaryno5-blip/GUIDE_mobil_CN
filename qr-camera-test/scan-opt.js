@@ -2,34 +2,74 @@
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '');
   if (!isMobile) return;
 
+  // V15: yêu cầu zoom ngay trong lúc xin camera. Một số iPhone (đặc biệt iPhone 13)
+  // cho kéo zoom bằng tay nhưng từ chối applyConstraints nếu gọi muộn sau khi stream đã chạy.
+  // Đặt zoom như "ideal" ở chính getUserMedia giúp WebKit có cơ hội mở track ở gần 2x ngay từ đầu.
+  try {
+    const md = navigator.mediaDevices;
+    if (md && md.getUserMedia && !md.__qrAcquireZoomV15) {
+      const nativeGUM = md.getUserMedia.bind(md);
+      const wrappedGUM = async function(constraints) {
+        let tuned = constraints;
+        try {
+          if (constraints && constraints.video && constraints.video !== true) {
+            const c = Object.assign({}, constraints);
+            const v = Object.assign({}, constraints.video);
+            const adv = Array.isArray(v.advanced) ? v.advanced.slice() : [];
+            adv.unshift({ zoom: 2.0 });
+            v.advanced = adv;
+            v.zoom = { ideal: 2.0 };
+            c.video = v;
+            tuned = c;
+          }
+        } catch (_) {}
+        try {
+          return await nativeGUM(tuned);
+        } catch (_) {
+          return nativeGUM(constraints);
+        }
+      };
+      try { md.getUserMedia = wrappedGUM; }
+      catch (_) {
+        try { Object.defineProperty(md, 'getUserMedia', { value: wrappedGUM, configurable: true }); } catch (__) {}
+      }
+      try { md.__qrAcquireZoomV15 = true; } catch (_) {}
+    }
+  } catch (_) {}
+
   // Tăng nhịp gọi bộ quét; scanBusy trong trang chính vẫn chặn xử lý chồng nhau.
   try {
     const nativeSetInterval = window.setInterval.bind(window);
     window.setInterval = function(fn, delay, ...args) {
       if (typeof fn === 'function' && fn.name === 'scanFrame' && Number(delay) === 85) {
-        return nativeSetInterval(fn, 50, ...args);
+        return nativeSetInterval(fn, 48, ...args);
       }
       return nativeSetInterval(fn, delay, ...args);
     };
   } catch (_) {}
 
-  // jsQR của trang chính vẫn nhận ảnh đã lấy từ canvas. Ta giảm mẫu trước khi giải mã
-  // để ưu tiên tốc độ; định kỳ mới dùng ảnh gốc làm tầng dự phòng cho mã khó/nhỏ.
+  // Tầng nhanh: chỉ giải mã phần giữa ảnh trước. Đây là "zoom số cho bộ giải mã",
+  // nên ngay cả khi iPhone 13 không chịu tự đổi zoom quang học thì QR ở giữa khung
+  // vẫn được xử lý trên vùng nhỏ hơn, ít nền thừa hơn và nhanh hơn.
   let fastBuffer = null;
   let qrCallCount = 0;
 
-  function downsampleRGBA(data, w, h, maxW = 900) {
-    if (!data || !w || !h || w <= maxW) return null;
-    const step = Math.max(2, Math.ceil(w / maxW));
-    const nw = Math.max(1, Math.floor(w / step));
-    const nh = Math.max(1, Math.floor(h / step));
+  function centerSampleRGBA(data, w, h, ratioX = 0.72, ratioY = 0.70, maxW = 920) {
+    if (!data || !w || !h) return null;
+    const cw = Math.max(1, Math.floor(w * ratioX));
+    const ch = Math.max(1, Math.floor(h * ratioY));
+    const ox = Math.max(0, Math.floor((w - cw) / 2));
+    const oy = Math.max(0, Math.floor((h - ch) / 2));
+    const step = Math.max(1, Math.ceil(cw / maxW));
+    const nw = Math.max(1, Math.floor(cw / step));
+    const nh = Math.max(1, Math.floor(ch / step));
     const need = nw * nh * 4;
     if (!fastBuffer || fastBuffer.length !== need) fastBuffer = new Uint8ClampedArray(need);
 
     let di = 0;
     for (let y = 0; y < nh; y++) {
-      const sy = y * step;
-      let si = (sy * w) * 4;
+      const sy = oy + y * step;
+      let si = (sy * w + ox) * 4;
       for (let x = 0; x < nw; x++) {
         fastBuffer[di++] = data[si];
         fastBuffer[di++] = data[si + 1];
@@ -42,23 +82,23 @@
   }
 
   function installFastJsQR() {
-    if (typeof window.jsQR !== 'function' || window.jsQR.__fastCenterV14) return false;
+    if (typeof window.jsQR !== 'function' || window.jsQR.__fastCenterV15) return false;
     const native = window.jsQR;
     const wrapped = function(data, w, h, opts) {
       qrCallCount++;
       try {
-        const fast = downsampleRGBA(data, w, h, 900);
+        const fast = centerSampleRGBA(data, w, h, 0.72, 0.70, 920);
         if (fast) {
           const fastOpts = Object.assign({}, opts || {}, { inversionAttempts: 'dontInvert' });
           const hit = native(fast.data, fast.w, fast.h, fastOpts);
           if (hit && hit.data) return hit;
-          // 1/4 lượt dùng ảnh gốc để giữ độ nhạy với QR nhỏ, mờ, tương phản kém hoặc đảo màu.
-          if (qrCallCount % 4 !== 0) return null;
+          // 1/3 lượt dùng toàn ảnh gốc để vẫn bắt QR lệch khung, rất nhỏ, mờ hoặc đảo màu.
+          if (qrCallCount % 3 !== 0) return null;
         }
       } catch (_) {}
       return native(data, w, h, opts);
     };
-    wrapped.__fastCenterV14 = true;
+    wrapped.__fastCenterV15 = true;
     window.jsQR = wrapped;
     return true;
   }
@@ -86,10 +126,8 @@
     }
   }
 
-  // V13 thử đặt zoom quá sớm và đánh dấu track là đã xử lý ngay cả khi Safari từ chối.
-  // V14 chỉ coi là xong khi giá trị thực tế đã lên gần 2x, và thử lại sau khi giao diện
-  // zoom của trang chính đã được khởi tạo. Ưu tiên dispatch input vì đây chính là đường
-  // điều khiển đã được người dùng xác nhận hoạt động khi kéo tay.
+  // Sau khi stream đã mở vẫn thử lại theo đúng đường điều khiển của thanh zoom.
+  // Không đánh dấu hoàn tất cho tới khi getSettings báo giá trị thực tế gần 2x.
   const zoomAttempts = new WeakMap();
 
   async function forceZoom2() {
@@ -113,7 +151,7 @@
 
     const attempts = (zoomAttempts.get(track) || 0) + 1;
     zoomAttempts.set(track, attempts);
-    if (attempts > 12) return false;
+    if (attempts > 24) return false;
 
     const z = document.getElementById('zoom');
     const zv = document.getElementById('zoomValue');
@@ -128,11 +166,11 @@
       }
     }
 
-    await new Promise(r => setTimeout(r, usedUI ? 110 : 20));
+    await new Promise(r => setTimeout(r, usedUI ? 130 : 30));
     try { current = Number(track.getSettings?.().zoom); } catch (_) { current = NaN; }
     if (!Number.isFinite(current) || Math.abs(current - target) > 0.08) {
       await applyZoomDirect(track, target);
-      await new Promise(r => setTimeout(r, 90));
+      await new Promise(r => setTimeout(r, 110));
       try { current = Number(track.getSettings?.().zoom); } catch (_) { current = NaN; }
     }
 
@@ -155,7 +193,7 @@
   }
 
   function scheduleTune() {
-    [80, 220, 450, 800, 1300, 2100, 3200].forEach(ms => {
+    [60, 160, 320, 600, 1000, 1600, 2400, 3500, 5000].forEach(ms => {
       setTimeout(() => { forceZoom2(); keepContinuousFocus(); }, ms);
     });
   }
@@ -174,7 +212,7 @@
     let n = 0;
     const watch = setInterval(() => {
       forceZoom2();
-      if (++n > 60) clearInterval(watch);
+      if (++n > 80) clearInterval(watch);
     }, 300);
   }
 
