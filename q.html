@@ -21,8 +21,16 @@
 (async()=>{
   const KEY='qr_windows_receiver_url_v1';
   const title=document.getElementById('title'),hostEl=document.getElementById('host'),hint=document.getElementById('hint'),icon=document.getElementById('icon'),btn=document.getElementById('open');
-  const go=()=>location.replace('./qr-camera-test/?paired=1');
+  const go=()=>location.replace('./qr-camera-test/?paired='+Date.now());
   function fail(msg){icon.textContent='!';icon.classList.add('bad');title.textContent='Không lưu được kết nối';hint.textContent=msg;btn.hidden=false;btn.onclick=go;}
+  function waitWorker(worker,ms=4500){
+    return new Promise(resolve=>{
+      if(!worker||worker.state==='activated') return resolve();
+      const t=setTimeout(resolve,ms);
+      const done=()=>{if(worker.state==='activated'||worker.state==='redundant'){clearTimeout(t);worker.removeEventListener('statechange',done);resolve();}};
+      worker.addEventListener('statechange',done);
+    });
+  }
   try{
     const raw=decodeURIComponent(location.hash.replace(/^#/,''));
     const p=raw.split('|');
@@ -40,22 +48,21 @@
     localStorage.setItem(KEY,receiver);
     hostEl.textContent=`${ip}:${pn}`;
     title.textContent='✓ ĐÃ LƯU WINDOWS';
-    hint.textContent='Đang chuẩn bị trình quét cho lần sử dụng đầu tiên…';
+    hint.textContent='Đang chuẩn bị trình quét lần đầu…';
 
     try{
       if('serviceWorker' in navigator){
-        const reg=await navigator.serviceWorker.register('./qr-camera-test/sw.js');
-        if(reg.installing){
-          await new Promise(resolve=>{
-            const t=setTimeout(resolve,2500);
-            reg.installing.addEventListener('statechange',()=>{if(reg.installing&&reg.installing.state==='activated'){clearTimeout(t);resolve();}});
-          });
-        }
+        const reg=await navigator.serviceWorker.register('./qr-camera-test/sw.js?v=5',{scope:'./qr-camera-test/'});
+        try{await reg.update();}catch(_){ }
+        const worker=reg.installing||reg.waiting;
+        if(worker) await waitWorker(worker);
+        try{await navigator.serviceWorker.ready;}catch(_){ }
+        await new Promise(r=>setTimeout(r,350));
       }
     }catch(_){ }
 
     btn.hidden=false;btn.onclick=go;
-    setTimeout(go,700);
+    setTimeout(go,450);
   }catch(e){fail(e&&e.message?e.message:String(e));}
 })();
 </script>
