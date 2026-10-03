@@ -1,4 +1,4 @@
-const CACHE='qr-windows-v19';
+const CACHE='qr-windows-v20';
 const CORE=['./','./index.html','./pair.html','./manifest.webmanifest','./icon.svg','./bridge.js','./scan-opt.js'];
 
 self.addEventListener('install',e=>{
@@ -15,8 +15,8 @@ self.addEventListener('activate',e=>{
 
 function injectScripts(html){
   let tags='';
-  if(!html.includes('scan-opt.js'))tags+='<script src="./scan-opt.js?v=19"></script>';
-  if(!html.includes('bridge.js'))tags+='<script src="./bridge.js?v=19"></script>';
+  if(!html.includes('scan-opt.js'))tags+='<script src="./scan-opt.js?v=20"></script>';
+  if(!html.includes('bridge.js'))tags+='<script src="./bridge.js?v=20"></script>';
   if(!tags)return html;
   if(html.includes('</head>'))return html.replace('</head>',tags+'</head>');
   return html.replace('</body>',tags+'</body>');
