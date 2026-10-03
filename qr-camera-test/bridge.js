@@ -1,12 +1,10 @@
 (() => {
-  // iPhone Safari/WebKit blocks fetch() from this HTTPS PWA to a plain-HTTP
-  // Receiver on the LAN. Top-level navigation is not mixed-content loading.
-  // The Receiver's GET /scan endpoint returns HTTP 204, so Safari should send
-  // the request without replacing the PWA document. This shim is iOS-only;
-  // desktop browsers keep using the normal fetch path.
-  const ua = navigator.userAgent || '';
-  const isiOS = /iPhone|iPad|iPod/i.test(ua);
-  if (!isiOS || !window.fetch) return;
+  // Browsers can block fetch() from this HTTPS PWA to a plain-HTTP Receiver
+  // on the LAN. A top-level navigation to the Receiver is allowed more widely.
+  // Receiver GET /scan replies HTTP 204, so the scanner page normally stays in place.
+  // Apply this bridge on iPhone AND desktop browsers so Surface can also scan
+  // with its own camera and send to the local Receiver.
+  if (!window.fetch) return;
 
   const nativeFetch = window.fetch.bind(window);
 
@@ -44,10 +42,9 @@
     const u = localURL(input);
     if (!u) return nativeFetch(input, init);
 
-    // The pairing UI only uses /health to decide whether to paint the saved
-    // Receiver green. Direct Safari navigation to /health is already proven to
-    // work; fetch is the part WebKit blocks. Resolve locally so the UI does not
-    // show a false network error.
+    // The UI only needs /health to show the saved Receiver as ready. Browsers
+    // may block the background fetch even though direct LAN navigation works,
+    // so avoid a false red state here. Real /scan requests still go to Receiver.
     if (u.pathname === '/health') {
       return new Response('{"ok":true}', {
         status: 200,
@@ -59,13 +56,15 @@
       const text = await bodyText(input, init);
       if (!text) return Promise.reject(new TypeError('Missing scan text'));
 
-      // Reuse the token already present in the saved pairing URL. The Receiver
-      // supports GET /scan?token=...&text=... and replies 204 No Content.
+      // Reuse token from the saved pairing URL. The Receiver supports
+      // GET /scan?token=...&text=... and responds 204 No Content.
       u.searchParams.set('text', text);
       u.searchParams.set('enter', '1');
+      u.searchParams.set('source', 'web');
 
-      // Schedule navigation after the current scan handler has finished updating
-      // its UI. A 204 navigation should leave the current PWA document in place.
+      // Schedule navigation after current UI updates. Receiver v1.3 detects
+      // same-PC requests and briefly focuses the last Word/Excel window, types
+      // the scan, then restores the browser so continuous scanning can continue.
       setTimeout(() => {
         try { window.location.assign(u.toString()); }
         catch (_) { window.location.href = u.toString(); }
