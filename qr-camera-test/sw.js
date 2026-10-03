@@ -1,5 +1,5 @@
-const CACHE='qr-windows-v12';
-const CORE=['./','./index.html','./pair.html','./manifest.webmanifest','./icon.svg','./bridge.js'];
+const CACHE='qr-windows-v13';
+const CORE=['./','./index.html','./pair.html','./manifest.webmanifest','./icon.svg','./bridge.js','./scan-opt.js'];
 
 self.addEventListener('install',e=>{
   self.skipWaiting();
@@ -13,11 +13,13 @@ self.addEventListener('activate',e=>{
   ]));
 });
 
-function injectBridge(html){
-  if(html.includes('bridge.js'))return html;
-  const tag='<script src="./bridge.js?v=12"></script>';
-  if(html.includes('</head>'))return html.replace('</head>',tag+'</head>');
-  return html.replace('</body>',tag+'</body>');
+function injectScripts(html){
+  let tags='';
+  if(!html.includes('scan-opt.js'))tags+='<script src="./scan-opt.js?v=13"></script>';
+  if(!html.includes('bridge.js'))tags+='<script src="./bridge.js?v=13"></script>';
+  if(!tags)return html;
+  if(html.includes('</head>'))return html.replace('</head>',tags+'</head>');
+  return html.replace('</body>',tags+'</body>');
 }
 
 self.addEventListener('fetch',e=>{
@@ -28,13 +30,13 @@ self.addEventListener('fetch',e=>{
     e.respondWith((async()=>{
       try{
         const r=await fetch(e.request,{cache:'no-store'});
-        const html=injectBridge(await r.text());
+        const html=injectScripts(await r.text());
         const h=new Headers(r.headers);h.set('Content-Type','text/html; charset=utf-8');h.set('Cache-Control','no-store');
         return new Response(html,{status:r.status,statusText:r.statusText,headers:h});
       }catch(err){
         const cached=await caches.match('./index.html');
         if(!cached)throw err;
-        const html=injectBridge(await cached.text());
+        const html=injectScripts(await cached.text());
         return new Response(html,{headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}});
       }
     })());
