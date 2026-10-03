@@ -32,6 +32,44 @@
     }
   }catch(_){}
 
+  // iPhone 13 trong thực tế đang chạy iOS 26.x: camera web 4K làm jsQR phải xử lý
+  // khung hình quá lớn và bắt mã chậm hơn nhiều so với bộ quét QR native của Shortcuts.
+  // Với iOS <= 26, hạ luồng camera web về 1080p: vẫn đủ chi tiết cho QR/CCCD nhưng
+  // giảm đáng kể lượng pixel phải đọc. iOS 27+ giữ nguyên để không làm thay đổi
+  // hành vi đang chạy tốt trên iPhone 16/17 của người dùng.
+  function getIOSMajor(){
+    const ua=navigator.userAgent||'';
+    const m=ua.match(/(?:CPU (?:iPhone )?OS|iPhone OS)\s*(\d+)[._]/i);
+    return m?Number(m[1]):0;
+  }
+  const IOS_MAJOR=getIOSMajor();
+  const IOS_OLD=IOS_MAJOR>0&&IOS_MAJOR<=26;
+
+  function installIOSCameraOptimizer(){
+    if(!IOS_OLD||!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)return;
+    const md=navigator.mediaDevices;
+    if(md.__qrIOSOptimized)return;
+    const nativeGUM=md.getUserMedia.bind(md);
+    const wrapped=function(constraints){
+      try{
+        if(!constraints||!constraints.video||constraints.video===true)return nativeGUM(constraints);
+        const c=Object.assign({},constraints);
+        const v=Object.assign({},constraints.video);
+        v.width={ideal:1920,max:1920};
+        v.height={ideal:1080,max:1080};
+        v.frameRate={ideal:30,max:30};
+        if(!v.deviceId)v.facingMode={ideal:'environment'};
+        c.video=v;
+        return nativeGUM(c).catch(()=>nativeGUM(constraints));
+      }catch(_){return nativeGUM(constraints)}
+    };
+    try{md.getUserMedia=wrapped}catch(_){
+      try{Object.defineProperty(md,'getUserMedia',{value:wrapped,configurable:true})}catch(__){}
+    }
+    try{md.__qrIOSOptimized=true}catch(_){}
+  }
+  installIOSCameraOptimizer();
+
   if(!window.fetch)return;
   const nativeFetch=window.fetch.bind(window);
 
@@ -222,6 +260,32 @@
     }
   }
 
+  // Trên iOS 26.x, nếu Safari vô tình chọn Ultra Wide/Tele thì đổi sang camera sau
+  // chính. Chỉ đổi khi nhãn hiện tại rõ ràng là ống kính phụ để không làm xáo trộn
+  // iPhone 16/17 đang hoạt động tốt.
+  let iosRearTried=false;
+  function preferMainRearCameraOnOlderIOS(){
+    if(iosRearTried||!IOS_OLD)return;
+    const sel=document.getElementById('cameraSelect');
+    if(!sel||sel.options.length<2||sel.selectedIndex<0)return;
+    const cur=sel.options[sel.selectedIndex];
+    const curLabel=String(cur.textContent||'');
+    if(!/(ultra\s*wide|telephoto|tele\b|front|camera trước|phía trước|phia truoc)/i.test(curLabel))return;
+    const opts=[...sel.options];
+    const rear=opts.find(o=>{
+      const s=String(o.textContent||'');
+      return /(rear|back|environment|world|camera sau|phía sau|phia sau)/i.test(s)&&
+             !/(ultra\s*wide|telephoto|tele\b|front|camera trước|phía trước|phia truoc)/i.test(s);
+    });
+    if(!rear)return;
+    iosRearTried=true;
+    if(sel.value!==rear.value){
+      sel.value=rear.value;
+      sel.dispatchEvent(new Event('change',{bubbles:true}));
+      setStatus('Đang tối ưu camera sau để bắt QR nhanh hơn…');
+    }
+  }
+
   function initUI(){
     addControlStyles();
     enhanceZoom();
@@ -232,8 +296,11 @@
     if(saved)recoveryBurst();
     setTimeout(preferRearCameraOnWindows,900);
     setTimeout(preferRearCameraOnWindows,1700);
+    setTimeout(preferMainRearCameraOnOlderIOS,900);
+    setTimeout(preferMainRearCameraOnOlderIOS,1800);
+    setTimeout(preferMainRearCameraOnOlderIOS,3000);
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initUI,{once:true});else initUI();
-  window.addEventListener('pageshow',()=>{try{if(sessionStorage.getItem('qr_resume_camera'))sessionStorage.removeItem('qr_resume_camera')}catch(_){}recoveryBurst();setTimeout(preferRearCameraOnWindows,700)});
+  window.addEventListener('pageshow',()=>{try{if(sessionStorage.getItem('qr_resume_camera'))sessionStorage.removeItem('qr_resume_camera')}catch(_){}recoveryBurst();setTimeout(preferRearCameraOnWindows,700);setTimeout(preferMainRearCameraOnOlderIOS,1000)});
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')recoveryBurst()});
 })();
