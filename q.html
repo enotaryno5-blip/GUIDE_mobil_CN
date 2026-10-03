@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b1220">
+<title>Kết nối QR → Windows</title>
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#0b1220;color:#fff;min-height:100svh;display:grid;place-items:center;padding:24px}.card{width:min(560px,100%);background:#141d2e;border:1px solid #ffffff22;border-radius:22px;padding:24px;text-align:center;box-shadow:0 15px 45px #0007}.ok{font-size:64px;line-height:1;margin:4px}.bad{color:#ff9d9d}h1{margin:12px 0 8px;font-size:28px}.host{font-weight:800;font-size:20px;word-break:break-word;color:#75e58a}.hint{color:#aeb9ca;line-height:1.5;margin:12px 0 18px}button{border:0;border-radius:14px;padding:14px 18px;background:#1677ff;color:#fff;font:inherit;font-weight:800;width:100%}
+</style>
+</head>
+<body>
+<div class="card">
+  <div id="icon" class="ok">✓</div>
+  <h1 id="title">Đang kết nối Windows…</h1>
+  <div id="host" class="host"></div>
+  <p id="hint" class="hint">Đang lưu Receiver và chuẩn bị trình quét. Chỉ cần làm bước này khi đổi máy tính, đổi mạng hoặc Receiver đổi mã kết nối.</p>
+  <button id="open" hidden>MỞ TRÌNH QUÉT QR</button>
+</div>
+<script>
+(async()=>{
+  const KEY='qr_windows_receiver_url_v1';
+  const title=document.getElementById('title'),hostEl=document.getElementById('host'),hint=document.getElementById('hint'),icon=document.getElementById('icon'),btn=document.getElementById('open');
+  const go=()=>location.replace('./qr-camera-test/?paired=1');
+  function fail(msg){icon.textContent='!';icon.classList.add('bad');title.textContent='Không lưu được kết nối';hint.textContent=msg;btn.hidden=false;btn.onclick=go;}
+  try{
+    const raw=decodeURIComponent(location.hash.replace(/^#/,''));
+    const p=raw.split('|');
+    if(p.length!==3) throw new Error('Mã kết nối không đúng định dạng.');
+    const ip=p[0].trim(),port=p[1].trim(),token=p[2].trim();
+    const m=ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if(!m) throw new Error('Địa chỉ máy tính không hợp lệ.');
+    const a=m.slice(1).map(Number);
+    if(a.some(n=>n<0||n>255)) throw new Error('Địa chỉ máy tính không hợp lệ.');
+    const priv=a[0]===10||(a[0]===172&&a[1]>=16&&a[1]<=31)||(a[0]===192&&a[1]===168);
+    if(!priv) throw new Error('Địa chỉ không thuộc mạng LAN riêng.');
+    const pn=Number(port); if(!Number.isInteger(pn)||pn<1024||pn>65535) throw new Error('Cổng Receiver không hợp lệ.');
+    if(!/^[A-Za-z0-9_-]{12,128}$/.test(token)) throw new Error('Mã bảo mật Receiver không hợp lệ.');
+    const receiver=`http://${ip}:${pn}/scan?token=${encodeURIComponent(token)}`;
+    localStorage.setItem(KEY,receiver);
+    hostEl.textContent=`${ip}:${pn}`;
+    title.textContent='✓ ĐÃ LƯU WINDOWS';
+    hint.textContent='Đang chuẩn bị trình quét cho lần sử dụng đầu tiên…';
+
+    try{
+      if('serviceWorker' in navigator){
+        const reg=await navigator.serviceWorker.register('./qr-camera-test/sw.js');
+        if(reg.installing){
+          await new Promise(resolve=>{
+            const t=setTimeout(resolve,2500);
+            reg.installing.addEventListener('statechange',()=>{if(reg.installing&&reg.installing.state==='activated'){clearTimeout(t);resolve();}});
+          });
+        }
+      }
+    }catch(_){ }
+
+    btn.hidden=false;btn.onclick=go;
+    setTimeout(go,700);
+  }catch(e){fail(e&&e.message?e.message:String(e));}
+})();
+</script>
+</body>
+</html>
