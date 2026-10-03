@@ -19,8 +19,6 @@
     }catch(_){return ''}
   }
 
-  // Bridge được nạp trong HEAD trước script chính. Khi ghép nối lần đầu,
-  // lưu Receiver ngay để trang quét có IP/cổng/token từ lần mở đầu tiên.
   try{
     const h=location.hash||'';
     if(h.startsWith('#receiver=')){
@@ -32,11 +30,6 @@
     }
   }catch(_){}
 
-  // iPhone 13 trong thực tế đang chạy iOS 26.x: camera web 4K làm jsQR phải xử lý
-  // khung hình quá lớn và bắt mã chậm hơn nhiều so với bộ quét QR native của Shortcuts.
-  // Với iOS <= 26, hạ luồng camera web về 1080p: vẫn đủ chi tiết cho QR/CCCD nhưng
-  // giảm đáng kể lượng pixel phải đọc. iOS 27+ giữ nguyên để không làm thay đổi
-  // hành vi đang chạy tốt trên iPhone 16/17 của người dùng.
   function getIOSMajor(){
     const ua=navigator.userAgent||'';
     const m=ua.match(/(?:CPU (?:iPhone )?OS|iPhone OS)\s*(\d+)[._]/i);
@@ -45,23 +38,40 @@
   const IOS_MAJOR=getIOSMajor();
   const IOS_OLD=IOS_MAJOR>0&&IOS_MAJOR<=26;
 
+  // iPhone 13 / iOS 26: giảm số pixel camera web phải giải mã.
+  // Bộ quét native của Shortcuts dùng engine iOS nên nhanh hơn; web cần giảm tải JS.
   function installIOSCameraOptimizer(){
     if(!IOS_OLD||!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)return;
     const md=navigator.mediaDevices;
     if(md.__qrIOSOptimized)return;
     const nativeGUM=md.getUserMedia.bind(md);
+    const tuneStream=stream=>{
+      try{
+        const t=stream&&stream.getVideoTracks&&stream.getVideoTracks()[0];
+        if(t){
+          try{t.contentHint='detail'}catch(_){}
+          try{
+            const caps=t.getCapabilities?t.getCapabilities():{};
+            if(Array.isArray(caps.focusMode)&&caps.focusMode.includes('continuous')){
+              t.applyConstraints({advanced:[{focusMode:'continuous'}]}).catch(()=>{});
+            }
+          }catch(_){}
+        }
+      }catch(_){}
+      return stream;
+    };
     const wrapped=function(constraints){
       try{
-        if(!constraints||!constraints.video||constraints.video===true)return nativeGUM(constraints);
+        if(!constraints||!constraints.video||constraints.video===true)return nativeGUM(constraints).then(tuneStream);
         const c=Object.assign({},constraints);
         const v=Object.assign({},constraints.video);
-        v.width={ideal:1920,max:1920};
-        v.height={ideal:1080,max:1080};
+        v.width={ideal:1280,max:1280};
+        v.height={ideal:720,max:720};
         v.frameRate={ideal:30,max:30};
         if(!v.deviceId)v.facingMode={ideal:'environment'};
         c.video=v;
-        return nativeGUM(c).catch(()=>nativeGUM(constraints));
-      }catch(_){return nativeGUM(constraints)}
+        return nativeGUM(c).then(tuneStream).catch(()=>nativeGUM(constraints).then(tuneStream));
+      }catch(_){return nativeGUM(constraints).then(tuneStream)}
     };
     try{md.getUserMedia=wrapped}catch(_){
       try{Object.defineProperty(md,'getUserMedia',{value:wrapped,configurable:true})}catch(__){}
@@ -69,6 +79,26 @@
     try{md.__qrIOSOptimized=true}catch(_){}
   }
   installIOSCameraOptimizer();
+
+  // QR thông thường là đen trên nền sáng. Trên iOS 26, phần lớn lượt quét bỏ
+  // bước thử ảnh đảo màu để giảm CPU; định kỳ vẫn thử cả hai để không mất tương thích.
+  function installFastJsQR(){
+    if(!IOS_OLD||typeof window.jsQR!=='function'||window.jsQR.__qrFastWrapped)return;
+    const native=window.jsQR;
+    let count=0;
+    const wrapped=function(data,w,h,opts){
+      count++;
+      const o=Object.assign({},opts||{});
+      if(count%6!==0)o.inversionAttempts='dontInvert';
+      return native(data,w,h,o);
+    };
+    wrapped.__qrFastWrapped=true;
+    window.jsQR=wrapped;
+  }
+  const fastJsTimer=setInterval(()=>{
+    installFastJsQR();
+    if(typeof window.jsQR==='function')clearInterval(fastJsTimer);
+  },80);
 
   if(!window.fetch)return;
   const nativeFetch=window.fetch.bind(window);
@@ -260,9 +290,6 @@
     }
   }
 
-  // Trên iOS 26.x, nếu Safari vô tình chọn Ultra Wide/Tele thì đổi sang camera sau
-  // chính. Chỉ đổi khi nhãn hiện tại rõ ràng là ống kính phụ để không làm xáo trộn
-  // iPhone 16/17 đang hoạt động tốt.
   let iosRearTried=false;
   function preferMainRearCameraOnOlderIOS(){
     if(iosRearTried||!IOS_OLD)return;
@@ -290,6 +317,7 @@
     addControlStyles();
     enhanceZoom();
     enhanceCameraTools();
+    installFastJsQR();
     const saved=localStorage.getItem(KEY)||'';
     const connect=document.getElementById('connect');
     if(saved&&connect)connect.textContent='ĐỔI WINDOWS';
