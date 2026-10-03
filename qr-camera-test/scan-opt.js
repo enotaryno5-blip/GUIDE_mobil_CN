@@ -1,16 +1,13 @@
 (() => {
-  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '');
-  if (!isMobile) return;
-
   const TARGET_ZOOM = 2.0;
   const DIGITAL_CROP = 0.50;
 
-  // V19: mặc định hiệu dụng 2.0x trên mọi điện thoại.
-  // Ưu tiên zoom thật của camera; nếu Safari không nhận (như một số iPhone 13),
-  // tự chuyển sang zoom số 2x cho cả phần nhìn và bộ giải mã.
+  // V20: mặc định hiệu dụng 2.0x trên mọi thiết bị, không phụ thuộc User-Agent.
+  // Ưu tiên zoom thật của camera; nếu trình duyệt không nhận thì dùng zoom số 2x
+  // cho cả phần nhìn và bộ giải mã.
   try {
     const md = navigator.mediaDevices;
-    if (md && md.getUserMedia && !md.__qrAcquireZoomV19) {
+    if (md && md.getUserMedia && !md.__qrAcquireZoomV20) {
       const nativeGUM = md.getUserMedia.bind(md);
       const wrappedGUM = async function(constraints) {
         let tuned = constraints;
@@ -19,12 +16,11 @@
             const c = Object.assign({}, constraints);
             const v = Object.assign({}, constraints.video);
 
-            // 4K làm jsQR nặng không cần thiết. 1080p đủ chi tiết cho QR và nhẹ hơn đáng kể.
+            // Giữ luồng vừa đủ chi tiết để QR rõ nhưng không làm jsQR xử lý 4K không cần thiết.
             v.width = { ideal: 1920, max: 1920 };
             v.height = { ideal: 1080, max: 1080 };
             v.frameRate = { ideal: 30, max: 30 };
 
-            // Vẫn thử xin zoom thật 2x ngay từ lúc mở camera.
             const adv = Array.isArray(v.advanced) ? v.advanced.slice() : [];
             adv.unshift({ zoom: TARGET_ZOOM });
             v.advanced = adv;
@@ -42,7 +38,7 @@
       catch (_) {
         try { Object.defineProperty(md, 'getUserMedia', { value: wrappedGUM, configurable: true }); } catch (__) {}
       }
-      try { md.__qrAcquireZoomV19 = true; } catch (_) {}
+      try { md.__qrAcquireZoomV20 = true; } catch (_) {}
     }
   } catch (_) {}
 
@@ -112,19 +108,18 @@
     const digital = digitalZoomActive();
 
     // Nếu camera không chịu zoom thật, phóng vùng giữa 2x ngay trên preview.
-    // Khung .camera đã overflow:hidden nên hình vẫn gọn trong khung quét.
     if (video) {
       video.style.transformOrigin = '50% 50%';
       video.style.transform = digital ? 'scale(2)' : 'scale(1)';
       video.style.willChange = 'transform';
     }
 
+    // Luôn hiển thị mức zoom hiệu dụng 2.0x, kể cả khi phần cứng vẫn báo 1.0x.
     if (wrap) wrap.style.display = 'block';
     if (value) value.textContent = '2.0×';
 
     if (slider) {
       if (digital) {
-        // Thanh chỉ phản ánh mức zoom hiệu dụng; Safari iPhone 13 có thể không có zoom phần cứng qua API.
         slider.min = '1';
         slider.max = '2';
         slider.step = '0.1';
@@ -157,7 +152,7 @@
     } catch (_) {}
   }
 
-  // ---- Bộ giải mã: zoom số thật sự, không chỉ phóng hình hiển thị ----
+  // Bộ giải mã dùng đúng vùng giữa tương đương zoom số 2x; định kỳ vẫn quét rộng để tránh bỏ mã lệch tâm.
   let fastBuffer = null;
   let qrCallCount = 0;
 
@@ -189,7 +184,7 @@
   }
 
   function installFastJsQR() {
-    if (typeof window.jsQR !== 'function' || window.jsQR.__effectiveZoomV19) return false;
+    if (typeof window.jsQR !== 'function' || window.jsQR.__effectiveZoomV20) return false;
     const native = window.jsQR;
 
     const wrapped = function(data, w, h, opts) {
@@ -206,7 +201,6 @@
           const hit = native(fast.data, fast.w, fast.h, fastOpts);
           if (hit && hit.data) return hit;
 
-          // Định kỳ quét toàn vùng gốc để vẫn bắt QR lệch tâm, rất nhỏ, mờ hoặc đảo màu.
           const fallbackEvery = digital ? 4 : 3;
           if (qrCallCount % fallbackEvery !== 0) return null;
         }
@@ -215,7 +209,7 @@
       return native(data, w, h, opts);
     };
 
-    wrapped.__effectiveZoomV19 = true;
+    wrapped.__effectiveZoomV20 = true;
     window.jsQR = wrapped;
     return true;
   }
