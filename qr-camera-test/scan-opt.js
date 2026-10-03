@@ -2,11 +2,10 @@
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '');
   if (!isMobile) return;
 
-  // V16: vẫn yêu cầu zoom ngay trong lúc xin camera. Một số iPhone cho phép tự đặt 2x,
-  // nhưng iPhone 13 có thể chỉ chấp nhận đổi zoom khi lệnh phát sinh trực tiếp từ thao tác chạm.
+  // V17: vẫn yêu cầu 2x ngay khi mở camera.
   try {
     const md = navigator.mediaDevices;
-    if (md && md.getUserMedia && !md.__qrAcquireZoomV16) {
+    if (md && md.getUserMedia && !md.__qrAcquireZoomV17) {
       const nativeGUM = md.getUserMedia.bind(md);
       const wrappedGUM = async function(constraints) {
         let tuned = constraints;
@@ -22,21 +21,18 @@
             tuned = c;
           }
         } catch (_) {}
-        try {
-          return await nativeGUM(tuned);
-        } catch (_) {
-          return nativeGUM(constraints);
-        }
+        try { return await nativeGUM(tuned); }
+        catch (_) { return nativeGUM(constraints); }
       };
       try { md.getUserMedia = wrappedGUM; }
       catch (_) {
         try { Object.defineProperty(md, 'getUserMedia', { value: wrappedGUM, configurable: true }); } catch (__) {}
       }
-      try { md.__qrAcquireZoomV16 = true; } catch (_) {}
+      try { md.__qrAcquireZoomV17 = true; } catch (_) {}
     }
   } catch (_) {}
 
-  // Tăng nhịp gọi bộ quét; scanBusy trong trang chính vẫn chặn xử lý chồng nhau.
+  // Tăng nhịp gọi scanFrame; scanBusy của trang chính vẫn chặn xử lý chồng nhau.
   try {
     const nativeSetInterval = window.setInterval.bind(window);
     window.setInterval = function(fn, delay, ...args) {
@@ -47,9 +43,7 @@
     };
   } catch (_) {}
 
-  // Tầng nhanh: chỉ giải mã phần giữa ảnh trước. Đây là "zoom số cho bộ giải mã",
-  // nên ngay cả khi iPhone không chịu tự đổi zoom camera thì QR ở giữa khung
-  // vẫn được xử lý trên vùng nhỏ hơn, ít nền thừa hơn và nhanh hơn.
+  // Quét nhanh vùng giữa trước; định kỳ mới quét ảnh gốc để giữ độ nhạy với mã khó.
   let fastBuffer = null;
   let qrCallCount = 0;
 
@@ -81,7 +75,7 @@
   }
 
   function installFastJsQR() {
-    if (typeof window.jsQR !== 'function' || window.jsQR.__fastCenterV16) return false;
+    if (typeof window.jsQR !== 'function' || window.jsQR.__fastCenterV17) return false;
     const native = window.jsQR;
     const wrapped = function(data, w, h, opts) {
       qrCallCount++;
@@ -91,13 +85,12 @@
           const fastOpts = Object.assign({}, opts || {}, { inversionAttempts: 'dontInvert' });
           const hit = native(fast.data, fast.w, fast.h, fastOpts);
           if (hit && hit.data) return hit;
-          // 1/3 lượt dùng toàn ảnh gốc để vẫn bắt QR lệch khung, rất nhỏ, mờ hoặc đảo màu.
           if (qrCallCount % 3 !== 0) return null;
         }
       } catch (_) {}
       return native(data, w, h, opts);
     };
-    wrapped.__fastCenterV16 = true;
+    wrapped.__fastCenterV17 = true;
     window.jsQR = wrapped;
     return true;
   }
@@ -110,10 +103,16 @@
     const video = document.getElementById('video');
     const stream = video && video.srcObject;
     if (!stream || !stream.getVideoTracks) return null;
-    return stream.getVideoTracks().find(t => t.readyState === 'live') || null;
+    return stream.getVideoTracks().find(t => t.readyState === 'live') || stream.getVideoTracks()[0] || null;
+  }
+
+  function setBadge(text) {
+    const b = document.getElementById('badge');
+    if (b) b.textContent = text;
   }
 
   async function applyZoomDirect(track, target) {
+    if (!track) return false;
     try {
       await track.applyConstraints({ advanced: [{ zoom: target }] });
       return true;
@@ -125,73 +124,52 @@
     }
   }
 
-  // Sau khi stream đã mở vẫn thử lại theo đúng đường điều khiển của thanh zoom.
-  // Không đánh dấu hoàn tất cho tới khi getSettings báo giá trị thực tế gần 2x.
-  const zoomAttempts = new WeakMap();
+  function uiZoomTarget() {
+    const z = document.getElementById('zoom');
+    if (!z) return 2.0;
+    const min = Number(z.min), max = Number(z.max);
+    if (Number.isFinite(min) && Number.isFinite(max) && max > min) {
+      return Math.max(min, Math.min(max, 2.0));
+    }
+    return 2.0;
+  }
+
+  function currentZoomApprox() {
+    const track = getLiveTrack();
+    try {
+      const s = track && track.getSettings ? track.getSettings() : {};
+      const n = Number(s.zoom);
+      if (Number.isFinite(n)) return n;
+    } catch (_) {}
+    const z = document.getElementById('zoom');
+    const n = Number(z && z.value);
+    return Number.isFinite(n) ? n : NaN;
+  }
 
   async function forceZoom2() {
     const track = getLiveTrack();
     if (!track) return false;
-
-    let caps = {};
-    try { caps = track.getCapabilities ? track.getCapabilities() : {}; } catch (_) {}
-    if (!caps.zoom || !Number.isFinite(caps.zoom.min) || !Number.isFinite(caps.zoom.max) || caps.zoom.max <= caps.zoom.min) return false;
-
-    const target = Math.max(caps.zoom.min, Math.min(caps.zoom.max, 2.0));
-    let current = NaN;
-    try { current = Number(track.getSettings?.().zoom); } catch (_) {}
-    if (Number.isFinite(current) && Math.abs(current - target) <= 0.08) {
-      const z = document.getElementById('zoom');
-      const zv = document.getElementById('zoomValue');
-      if (z) z.value = String(current);
-      if (zv) zv.textContent = current.toFixed(1) + '×';
-      return true;
-    }
-
-    const attempts = (zoomAttempts.get(track) || 0) + 1;
-    zoomAttempts.set(track, attempts);
-    if (attempts > 24) return false;
+    const target = uiZoomTarget();
+    const now = currentZoomApprox();
+    if (Number.isFinite(now) && Math.abs(now - target) <= 0.12) return true;
 
     const z = document.getElementById('zoom');
     const zv = document.getElementById('zoomValue');
-    let usedUI = false;
     if (z) {
-      const zmin = Number(z.min), zmax = Number(z.max);
-      if (Number.isFinite(zmin) && Number.isFinite(zmax) && zmax > zmin) {
-        const uiTarget = Math.max(zmin, Math.min(zmax, target));
-        z.value = String(uiTarget);
-        if (zv) zv.textContent = uiTarget.toFixed(1) + '×';
-        try { z.dispatchEvent(new Event('input', { bubbles: true })); usedUI = true; } catch (_) {}
-      }
+      z.value = String(target);
+      if (zv) zv.textContent = target.toFixed(1) + '×';
+      try { z.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
     }
-
-    await new Promise(r => setTimeout(r, usedUI ? 130 : 30));
-    try { current = Number(track.getSettings?.().zoom); } catch (_) { current = NaN; }
-    if (!Number.isFinite(current) || Math.abs(current - target) > 0.08) {
-      await applyZoomDirect(track, target);
-      await new Promise(r => setTimeout(r, 110));
-      try { current = Number(track.getSettings?.().zoom); } catch (_) { current = NaN; }
-    }
-
-    if (Number.isFinite(current)) {
-      if (z) z.value = String(current);
-      if (zv) zv.textContent = current.toFixed(1) + '×';
-    }
-    return Number.isFinite(current) && Math.abs(current - target) <= 0.12;
+    await applyZoomDirect(track, target);
+    return false;
   }
 
-  function setBadge(text) {
-    const b = document.getElementById('badge');
-    if (b) b.textContent = text;
-  }
-
-  // Fallback chỉ hiện khi tự zoom không thành công. Nút này tạo thao tác người dùng thật,
-  // cùng loại kích hoạt đã được xác nhận là hoạt động khi kéo thanh zoom bằng tay trên iPhone 13.
+  // V17: nút fallback KHÔNG còn phụ thuộc getCapabilities().zoom và KHÔNG đặt trong zoomWrap.
+  // Vì iPhone 13 có thể cho kéo zoom bằng tay nhưng báo capability không đầy đủ cho script.
   function installTrustedZoomFallback() {
-    const wrap = document.getElementById('zoomWrap');
-    const z = document.getElementById('zoom');
-    const zv = document.getElementById('zoomValue');
-    if (!wrap || !z || document.getElementById('zoom2Fallback')) return;
+    if (document.getElementById('zoom2Fallback')) return;
+    const controls = document.querySelector('.controls');
+    if (!controls) return;
 
     const btn = document.createElement('button');
     btn.id = 'zoom2Fallback';
@@ -199,65 +177,52 @@
     btn.className = 'secondary';
     btn.textContent = 'BẬT ZOOM 2×';
     btn.style.width = '100%';
-    btn.style.marginTop = '10px';
     btn.style.display = 'none';
-    wrap.appendChild(btn);
 
-    function readState() {
-      const track = getLiveTrack();
-      if (!track) return { track:null, target:2, current:NaN, supported:false };
-      let caps = {};
-      try { caps = track.getCapabilities ? track.getCapabilities() : {}; } catch (_) {}
-      if (!caps.zoom || !Number.isFinite(caps.zoom.min) || !Number.isFinite(caps.zoom.max) || caps.zoom.max <= caps.zoom.min) {
-        return { track, target:2, current:NaN, supported:false };
-      }
-      const target = Math.max(caps.zoom.min, Math.min(caps.zoom.max, 2.0));
-      let current = NaN;
-      try { current = Number(track.getSettings?.().zoom); } catch (_) {}
-      return { track, target, current, supported:true };
-    }
+    const zoomWrap = document.getElementById('zoomWrap');
+    if (zoomWrap && zoomWrap.parentNode === controls) controls.insertBefore(btn, zoomWrap.nextSibling);
+    else controls.appendChild(btn);
 
     function refresh() {
-      const s = readState();
-      if (!s.supported) { btn.style.display = 'none'; return; }
-      const ok = Number.isFinite(s.current) && Math.abs(s.current - s.target) <= 0.12;
-      btn.style.display = ok ? 'none' : 'block';
+      if (!getLiveTrack()) { btn.style.display = 'none'; return; }
+      const now = currentZoomApprox();
+      btn.style.display = Number.isFinite(now) && now >= 1.85 ? 'none' : 'block';
     }
 
     btn.addEventListener('click', async () => {
-      const s = readState();
-      if (!s.supported || !s.track) return;
+      const track = getLiveTrack();
+      if (!track) return;
+      const target = uiZoomTarget();
+      const z = document.getElementById('zoom');
+      const zv = document.getElementById('zoomValue');
+
       btn.disabled = true;
       btn.textContent = 'ĐANG BẬT 2×…';
 
-      // Gọi cả đường input đang dùng khi kéo tay và applyConstraints trực tiếp,
-      // ngay trong handler click được Safari coi là thao tác người dùng.
-      z.value = String(s.target);
-      if (zv) zv.textContent = s.target.toFixed(1) + '×';
-      try { z.dispatchEvent(new Event('input', { bubbles:true })); } catch (_) {}
-      const directPromise = applyZoomDirect(s.track, s.target);
-      try { await directPromise; } catch (_) {}
-      await new Promise(r => setTimeout(r, 140));
-
-      let current = NaN;
-      try { current = Number(s.track.getSettings?.().zoom); } catch (_) {}
-      if (Number.isFinite(current)) {
-        z.value = String(current);
-        if (zv) zv.textContent = current.toFixed(1) + '×';
+      // Thực hiện ngay trong thao tác chạm thật của người dùng.
+      if (z) {
+        z.value = String(target);
+        if (zv) zv.textContent = target.toFixed(1) + '×';
+        try { z.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
       }
-      const ok = Number.isFinite(current) && Math.abs(current - s.target) <= 0.12;
+      await applyZoomDirect(track, target);
+      await new Promise(r => setTimeout(r, 180));
+
+      const now = currentZoomApprox();
+      const ok = Number.isFinite(now) && now >= 1.85;
       if (ok) {
         btn.style.display = 'none';
         setBadge('Zoom 2.0× · đang tự quét QR');
       } else {
+        btn.style.display = 'block';
         btn.textContent = 'THỬ LẠI ZOOM 2×';
-        setBadge('Safari chưa nhận zoom 2× · có thể kéo thanh zoom');
+        setBadge('Safari chưa đổi zoom · kéo thanh zoom nếu cần');
       }
       btn.disabled = false;
     });
 
-    // Cho tự zoom đủ thời gian trước; chỉ hiện nút nếu máy vẫn còn ở mức khác 2x.
-    [900, 1500, 2500, 4000].forEach(ms => setTimeout(refresh, ms));
+    [700, 1200, 2000, 3500].forEach(ms => setTimeout(refresh, ms));
+    setInterval(refresh, 1200);
   }
 
   async function keepContinuousFocus() {
@@ -272,10 +237,10 @@
   }
 
   function scheduleTune() {
-    [60, 160, 320, 600, 1000, 1600, 2400, 3500, 5000].forEach(ms => {
+    [60, 180, 360, 700, 1200, 2000, 3200].forEach(ms => {
       setTimeout(() => { forceZoom2(); keepContinuousFocus(); }, ms);
     });
-    [500, 900, 1400].forEach(ms => setTimeout(installTrustedZoomFallback, ms));
+    [100, 400, 900].forEach(ms => setTimeout(installTrustedZoomFallback, ms));
   }
 
   function startWatch() {
@@ -284,17 +249,17 @@
       video.addEventListener('loadedmetadata', scheduleTune);
       video.addEventListener('playing', scheduleTune);
     }
-
     const select = document.getElementById('cameraSelect');
     if (select) select.addEventListener('change', () => setTimeout(scheduleTune, 120));
 
+    installTrustedZoomFallback();
     scheduleTune();
     let n = 0;
     const watch = setInterval(() => {
       forceZoom2();
       installTrustedZoomFallback();
-      if (++n > 80) clearInterval(watch);
-    }, 300);
+      if (++n > 60) clearInterval(watch);
+    }, 350);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startWatch, { once: true });
